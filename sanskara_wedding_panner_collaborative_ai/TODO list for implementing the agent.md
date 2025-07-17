@@ -1,0 +1,103 @@
+Of course. This is a critical step for translating a complex architectural design into an actionable development plan. A structured to-do list with clear dependencies and testing phases is the key to building this system successfully.
+Here is a comprehensive implementation plan, broken down into phases, with sub-tasks and dedicated testing steps.
+---
+### **Phase 1: Foundation & Backend Setup**
+*   **Goal:** Establish the core infrastructure, database schema, and basic server environment.
+*   **[ ] Task 1: Finalize & Deploy Database Schema**
+	- [ ] Review and confirm all table structures (`users`, `weddings`, `tasks`, `workflows`, `vendors`, etc.) are finalized.
+	- [ ] Add any missing columns identified in the design phase (e.g., `lead_party` in `tasks`, more `status` enums).
+	- [ ] Write and execute the SQL script in your Supabase project to create all tables, indexes, and triggers.
+	- [ ] Configure Supabase auth and RLS (Row Level Security) policies to ensure users can only access their own wedding data.
+*   **[ ] Task 2: Setup Backend Server & Google ADK Framework**
+	- [ ] Initialize a new Python project with FastAPI.
+	- [ ] Set up a virtual environment and install core dependencies: `google-agent-toolkit`, `fastapi`, `uvicorn`, `supabase-client`, `psycopg2-binary`.
+	- [ ] Create environment variable management (`.env`) for Supabase URL/keys, Google Cloud credentials, etc.
+	- [ ] Implement a basic WebSocket endpoint in FastAPI to connect with the frontend.
+	- [ ] Create the initial directory structure for the project (`/agents`, `/tools`, `/workflows`, `/models`).
+*   **[ ] Task 3: Implement Core Database Connection Tools**
+	- [ ] Create a singleton or dependency-injected Supabase client to be used across the application.
+	- [ ] Implement a few basic, low-level data access functions (e.g., `getUserById`, `getWeddingById`). These are not agent tools yet, but helpers.
+*   **[ ] Task 4: Foundational Testing**
+	- [ ] **Test:** Write unit tests to confirm direct database connections are working.
+	- [ ] **Test:** Manually test the WebSocket connection from a simple client to ensure the server is running and accessible.
+	- [ ] **Test:** Manually insert data into Supabase tables and verify RLS policies are working correctly.
+---
+### **Phase 2: The Setup & Onboarding Workflow**
+*   **Goal:** Implement the critical user onboarding and the automated setup process that prepares the system for the main agent interactions.
+*   **[ ] Task 5: Implement the Onboarding API Endpoint**
+	- [ ] Create a REST API endpoint (e.g., `/onboarding/submit`) that the frontend can call when a user completes the onboarding questionnaire.
+	- [ ] This endpoint should handle data validation and store the raw onboarding JSON temporarily.
+*   **[ ] Task 6: Implement the ****`SetupAgent`**** and its Tools**
+	- [ ] Create the `SetupAgent` class.
+	- [ ] Implement the master tool: `commit_and_activate_plan(onboarding_data)`.
+	- [ ] Implement the sub-functions used by the master tool:
+		- [ ] `bulk_create_workflows` (creates entries in the `workflows` table).
+		- [ ] `bulk_create_tasks_from_template` (the complex logic to generate tasks based on cultural background).
+		- [ ] `set_task_deadlines` (calculates due dates based on wedding date).
+		- [ ] `populate_initial_budget`.
+*   **[ ] Task 7: Orchestrate the Onboarding Flow**
+	- [ ] Wire the `/onboarding/submit` endpoint to trigger the `SetupAgent` _only_ after the second partner has submitted their data.
+	- [ ] Ensure the entire `SetupAgent` run is wrapped in a database transaction.
+*   **[ ] Task 8: Onboarding & Setup Testing**
+	- [ ] **Test:** Create mock onboarding JSON data for different cultural pairings (e.g., Maharashtrian/Punjabi, South Indian/Gujarati).
+	- [ ] **Test:** Write unit tests for the `SetupAgent`. For a given input, does it produce the expected number of tasks and workflows? Are the deadlines calculated correctly?
+	- [ ] **Test (End-to-End):** Call the API endpoint with mock data and verify in the Supabase dashboard that all tables (`workflows`, `tasks`, `budget_items`) are populated correctly and the wedding `status` is set to `'active'`.
+---
+### **Phase 3: The Orchestrator & The First Key Agent**
+*   **Goal:** Bring the main conversational agent online and empower it with its first critical capability: vendor management.
+*   **[ ] Task 9: Implement the ****`OrchestratorAgent`**
+	- [ ] Create the main `OrchestratorAgent` class within the ADK framework.
+	- [ ] Implement its core logic for session management and context priming (querying `workflows` and `tasks` on startup).
+	- [ ] Connect the Orchestrator to the main WebSocket endpoint.
+*   **[ ] Task 10: Implement the ****`VendorManagementAgent`**
+	- [ ] Create the `VendorManagementAgent` class. It will be treated as a "Smart Tool" by the Orchestrator.
+	- [ ] Implement its core tools as Python functions:
+		- [ ] `search_vendors()`
+		- [ ] `get_vendor_details()`
+		- [ ] `add_to_shortlist()`
+		- [ ] `create_booking()`
+*   **[ ] Task 11: Integrate Agents**
+	- [ ] Within the Orchestrator's setup, register the `VendorManagementAgent` as an available tool.
+	- [ ] Develop the logic for the Orchestrator's LLM to recognize when to call the `vendor_management_tool`.
+*   **[ ] Task 12: Vendor Workflow Testing**
+	- [ ] **Test (Unit):** Write unit tests for each vendor tool (e.g., does `search_vendors` return the correct format?).
+	- [ ] **Test (Integration):** Create a test script that directly invokes the `OrchestratorAgent`. Send it a message like "Find me a photographer" and assert that it correctly calls the `VendorManagementAgent`'s tool.
+	- [ ] **Test (E2E):** Connect via the WebSocket and have a full conversation about finding, shortlisting, and booking a vendor. Verify every database update in Supabase.
+---
+### **Phase 4: Expanding Capabilities & The Collaborative Loop**
+*   **Goal:** Implement the remaining agents and the critical "Lead and Review" collaboration workflow.
+*   **[ ] Task 13: Implement the ****`TaskAndTimelineAgent`**** & its Tools**
+	- [ ] Create the agent class.
+	- [ ] Implement its tools: `get_tasks`, `update_task_status`, `submit_task_feedback`, `approve_task_final_choice`. This is the backbone of collaboration.
+*   **[ ] Task 14: Implement the ****`GuestAndCommunicationAgent`**** & its Tools**
+	- [ ] Create the agent class.
+	- [ ] Implement internal tools: `add_guest`, `update_guest_rsvp`.
+	- [ ] **(Complex Sub-task):** Integrate with an external service like Twilio for WhatsApp. Implement `send_whatsapp_message`. This involves handling API keys, templates, and error handling.
+*   **[ ] Task 15: Implement Remaining Specialist Agents**
+	- [ ] Implement `BudgetAndExpenseAgent` and its tools (`add_expense`, `get_budget_summary`).
+	- [ ] Implement `RitualAndCulturalAgent` and its `get_ritual_information` tool (this may require setting up a separate vector DB).
+*   **[ ] Task 16: Build the "Lead and Review" Logic**
+	- [ ] Enhance the `OrchestratorAgent`'s logic to guide users through the collaborative flow. It must know how to prompt a user to "Share for Review" and how to present feedback to the other party.
+	- [ ] This involves complex state management using the `tasks` table's status (`'pending_review'`, `'pending_final_approval'`).
+*   **[ ] Task 17: Collaboration & Multi-Agent Testing**
+	- [ ] **Test (Unit):** Test all new tools for the remaining agents.
+	- [ ] **Test (Collaboration E2E):** This requires a dedicated test script.
+		*   Simulate **User A (Bride)** logging in, shortlisting a vendor, and triggering the "Share for Review".
+		*   Verify the task status changes to `'pending_review'` and a notification would be sent.
+		*   Simulate **User B (Groom)** logging in, submitting feedback, and approving the final choice.
+		*   Verify all database states (`task_feedback`, `task_approvals`, `tasks.status='completed'`) are correct at the end of the flow.
+### **Phase 5: Deployment, Monitoring & Final Polish**
+*   **Goal:** Deploy the system, ensure it's robust, and add final touches.
+*   **[ ] Task 18: Containerize the Application**
+	- [ ] Write a `Dockerfile` for the FastAPI application.
+	- [ ] Use Docker Compose to manage the server and any local dependencies (like Redis for caching).
+*   **[ ] Task 19: Deploy to a Cloud Service**
+	- [ ] Choose a cloud provider (e.g., Google Cloud Run, AWS App Runner).
+	- [ ] Set up CI/CD pipelines to automate deployment from your Git repository.
+*   **[ ] Task 20: Implement Logging & Monitoring**
+	- [ ] Integrate a structured logging library (e.g., `loguru`).
+	- [ ] Set up monitoring dashboards (e.g., in Google Cloud) to track API latency, error rates, and agent performance. This is crucial for long-term reliability.
+*   **[ ] Task 21: Full System Acceptance Testing**
+	- [ ] **Test:** Conduct a full, manual run-through of the entire wedding planning process from the perspective of two new users.
+	- [ ] **Test:** Perform basic load testing to see how the system handles multiple concurrent users.
+	- [ ] **Test:** Review all user-facing text generated by the LLM for tone, clarity, and helpfulness. Refine prompts as needed.
