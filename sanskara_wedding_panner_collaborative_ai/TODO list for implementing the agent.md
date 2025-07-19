@@ -1,32 +1,36 @@
-Of course. This is a critical step for translating a complex architectural design into an actionable development plan. A structured to-do list with clear dependencies and testing phases is the key to building this system successfully.
+Of course. This is a critical step for translating a complex architectural design into an actionable development plan.
 Here is a comprehensive implementation plan, broken down into phases, with sub-tasks and dedicated testing steps.
 ---
 ### **Phase 1: Foundation & Backend Setup**
 *   **Goal:** Establish the core infrastructure, database schema, and basic server environment.
-*   **[ ] Task 1: Finalize & Deploy Database Schema**
-	- [ ] Review and confirm all table structures (`users`, `weddings`, `tasks`, `workflows`, `vendors`, etc.) are finalized.
-	- [ ] Add any missing columns identified in the design phase (e.g., `lead_party` in `tasks`, more `status` enums).
-	- [ ] Write and execute the SQL script in your Supabase project to create all tables, indexes, and triggers.
-	- [ ] Configure Supabase auth and RLS (Row Level Security) policies to ensure users can only access their own wedding data.
-*   **[ ] Task 2: Setup Backend Server & Google ADK Framework**
-	- [ ] Initialize a new Python project with FastAPI.
-	- [ ] Set up a virtual environment and install core dependencies: `google-agent-toolkit`, `fastapi`, `uvicorn`, `supabase-client`, `psycopg2-binary`.
-	- [ ] Create environment variable management (`.env`) for Supabase URL/keys, Google Cloud credentials, etc.
-	- [ ] Implement a basic WebSocket endpoint in FastAPI to connect with the frontend.
-	- [ ] Create the initial directory structure for the project (`/agents`, `/tools`, `/workflows`, `/models`).
-*   **[ ] Task 3: Implement Core Database Connection Tools**
-	- [ ] Create a singleton or dependency-injected Supabase client to be used across the application.
-	- [ ] Implement a few basic, low-level data access functions (e.g., `getUserById`, `getWeddingById`). These are not agent tools yet, but helpers.
-*   **[ ] Task 4: Foundational Testing**
-	- [ ] **Test:** Write unit tests to confirm direct database connections are working.
-	- [ ] **Test:** Manually test the WebSocket connection from a simple client to ensure the server is running and accessible.
-	- [ ] **Test:** Manually insert data into Supabase tables and verify RLS policies are working correctly.
+*   **[x] Task 1: Finalize & Deploy Database Schema**
+	- [x] Review and confirm all table structures (`users`, `weddings`, `tasks`, `workflows`, `vendors`, etc.) are finalized.
+	- [x] Add any missing columns identified in the design phase (e.g., `lead_party` in `tasks`, more `status` enums).
+	- [x] Write and execute the SQL script in your Supabase project to create all tables, indexes, and triggers.
+	- [x] Configure Supabase auth and RLS (Row Level Security) policies to ensure users can only access their own wedding data. (PARTIALLY COMPLETED)
+*   **[x] Task 2: Setup Backend Server & Google ADK Framework**
+	- [x] Initialize a new Python project with FastAPI.
+	- [x] Set up a virtual environment and install core dependencies
+	- [x] Create environment variable management (`.env`) for Supabase URL/keys, Google Cloud credentials, etc.
+	- [x] Implement a basic WebSocket endpoint in FastAPI to connect with the frontend.
+	- [x] Create the initial directory structure for the project 
+*   **[x] Task 3: Implement Core Database Connection Tools**
+	- [x] Create a singleton or dependency-injected Supabase client to be used across the application.
+	- [x] Implement a few basic, low-level data access functions . These are not agent tools yet, but helpers.
+
+*   **[x] Task 4: Foundational Testing**
+	- [x] **Test:** Write unit tests to confirm direct database connections are working.
+	- [x] **Test:** Manually test the WebSocket connection from a simple client to ensure the server is running and accessible.
+	- [x] **Test:** Manually insert data into Supabase tables and verify RLS policies are working correctly.
 ---
 ### **Phase 2: The Setup & Onboarding Workflow**
 *   **Goal:** Implement the critical user onboarding and the automated setup process that prepares the system for the main agent interactions.
 *   **[ ] Task 5: Implement the Onboarding API Endpoint**
-	- [ ] Create a REST API endpoint (e.g., `/onboarding/submit`) that the frontend can call when a user completes the onboarding questionnaire.
-	- [ ] This endpoint should handle data validation and store the raw onboarding JSON temporarily.
+	- [x] Create a REST API endpoint (e.g., `/onboarding/submit`) that the frontend can call when a user completes the onboarding questionnaire.
+	- [x] Refactor `submit_onboarding_data` to decompose responsibilities into smaller, focused functions (`_handle_first_partner_submission`, `_handle_second_partner_submission`, `_update_existing_partner_details`).
+	- [x] Centralize SQL query construction using `db_queries.py` to separate SQL logic from business logic.
+	- [ ] This endpoint should handle data validation and store the raw onboarding JSON temporarily. - when both partners have submitted their data , use weddings table details jsonb column to store the onboarding data.
+	- [ ] Once both partners have submitted their data, it should trigger the `SetupAgent`.
 *   **[ ] Task 6: Implement the ****`SetupAgent`**** and its Tools**
 	- [ ] Create the `SetupAgent` class.
 	- [ ] Implement the master tool: `commit_and_activate_plan(onboarding_data)`.

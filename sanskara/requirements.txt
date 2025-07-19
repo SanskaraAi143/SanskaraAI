@@ -1,0 +1,13 @@
+google-adk
+fastapi
+uvicorn
+python-dotenv
+loguru
+pytest
+pytest-asyncio
+astrapy
+websockets
+google-search-results
+redis
+celery
+pytest-asyncio
