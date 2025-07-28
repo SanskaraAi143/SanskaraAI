@@ -10,10 +10,20 @@ from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset, StdioServerParamet
 
 logger = logging.getLogger(__name__)
 
-dotenv_path = os.path.join(os.path.dirname(__file__), '..', '.env') # Updated path
-if dotenv.load_dotenv(dotenv_path=dotenv_path):
-    logger.info(f"helpers.py: Loaded .env from: {dotenv_path}")
-else:
+dotenv_paths = [
+    os.path.join(os.path.dirname(__file__), '..', '.env'),
+    os.path.join(os.path.dirname(__file__), '.env'),
+    os.path.abspath('.env')
+]
+
+dotenv_loaded = False
+for path in dotenv_paths:
+    if os.path.exists(path) and dotenv.load_dotenv(dotenv_path=path):
+        logger.info(f"helpers.py: Loaded .env from: {path}")
+        dotenv_loaded = True
+        break
+
+if not dotenv_loaded:
     if dotenv.load_dotenv():
         logger.info("helpers.py: Loaded .env from current directory or parent.")
     else:

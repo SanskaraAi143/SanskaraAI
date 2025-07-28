@@ -1,12 +1,13 @@
 import json
 import logging
 from typing import Optional, Dict, Any, List
-from google.adk.agents import LlmAgent
+from google.adk.agents import LlmAgent,BaseAgent,Agent
 from google.adk.tools import agent_tool
 import os
 from google.adk.models import LlmResponse, LlmRequest
 from .sub_agents.setup_agent.agent import setup_agent
 from .sub_agents.vendor_management_agent.agent import vendor_management_agent
+from google.adk.tools import google_search,preload_memory
 import agentops
 # Import other specialized agents as they are implemented
 # from .sub_agents.task_and_timeline_agent.agent import task_and_timeline_agent
@@ -44,25 +45,26 @@ agentops.init(
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-root_agent = LlmAgent(
+root_agent = Agent(
     name="RootAgent",
-    #model="gemini-2.0-flash-live-001",
-    model="gemini-2.5-flash",
+    model="gemini-2.0-flash-live-001",
+    #model="gemini-2.5-flash",
     description="Orchestrates the entire wedding planning workflow, delegates to specialized agents, and manages conversational context.",
     instruction=ROOT_AGENT_PROMPT,
     sub_agents=[], # RootAgent will use other agents as tools, not as sub_agents in the ADK sense
     tools=[
         # Direct tools for RootAgent (e.g., for database interactions at a high level)
-        get_active_workflows,
-        get_tasks_for_wedding,
-        update_workflow_status,
-        create_workflow,
-        update_task_details,
-        create_task,
+        # get_active_workflows,
+        # get_tasks_for_wedding,
+        # update_workflow_status,
+        # create_workflow,
+        # update_task_details,
+        # create_task,
+        google_search
 
         # Specialized Agents wrapped as AgentTools
         #setup_agent_tool,
-        vendor_management_agent_tool,
+        #vendor_management_agent_tool,
         # task_and_timeline_agent_tool,
         # guest_and_communication_agent_tool,
         # budget_and_expense_agent_tool,
@@ -70,5 +72,5 @@ root_agent = LlmAgent(
         # creative_agent_tool,
         # collaboration_consensus_agent_tool,
     ],
-    output_key="root_response" # Key for the output of this agent
+    #output_key="root_response" # Key for the output of this agent
 )
