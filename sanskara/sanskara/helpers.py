@@ -10,7 +10,7 @@ from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset, StdioServerParamet
 
 logger = logging.getLogger(__name__)
 
-dotenv_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '.env')
+dotenv_path = os.path.join(os.path.dirname(__file__), '..', '.env') # Updated path
 if dotenv.load_dotenv(dotenv_path=dotenv_path):
     logger.info(f"helpers.py: Loaded .env from: {dotenv_path}")
 else:
@@ -46,7 +46,7 @@ async def init_supabase_mcp() -> Tuple[Optional[MCPToolset], Optional[Dict[str, 
                 args=["-y", "@supabase/mcp-server-supabase@latest", "--access-token", SUPABASE_ACCESS_TOKEN],
             )
         mcp= MCPToolset(
-            connection_params=StdioConnectionParams(server_params=connection_params),tool_filter=["execute_sql"]
+            connection_params=StdioConnectionParams(server_params=connection_params,timeout=20),tool_filter=["execute_sql"]
         )
         _mcp_session = mcp # Assign the new MCPToolset instance to _mcp_session
         tools = await mcp.get_tools()
@@ -104,6 +104,10 @@ async def execute_supabase_sql(sql: str, params: Optional[Dict[str, Any]] = None
         mcp_result = await sql_tool.run_async(args=mcp_args, tool_context=None)
         logger.debug(f"execute_supabase_sql: Raw result from MCP: {mcp_result}")
 
+        if hasattr(mcp_result, "error_message") and mcp_result.error_message:
+            logger.error(f"execute_supabase_sql: MCP tool returned an error: {mcp_result.error_message}")
+            return {"status": "error", "error": str(mcp_result.error_message)}
+        
         if hasattr(mcp_result, "content") and mcp_result.content and hasattr(mcp_result.content[0], "text"):
             text_response = mcp_result.content[0].text
 
@@ -119,10 +123,6 @@ async def execute_supabase_sql(sql: str, params: Optional[Dict[str, Any]] = None
             except json.JSONDecodeError:
                 logger.error(f"execute_supabase_sql: Failed to parse MCP response as JSON. Response text: {text_response}")
                 return {"status": "error", "error": "Failed to parse database response.", "details": text_response}
-
-        if hasattr(mcp_result, "error_message") and mcp_result.error_message:
-            logger.error(f"execute_supabase_sql: MCP tool returned an error: {mcp_result.error_message}")
-            return {"status": "error", "error": str(mcp_result.error_message)}
 
         logger.error(f"execute_supabase_sql: No content or unexpected format in MCP response: {mcp_result}")
         return {"status": "error", "error": "No content or unexpected format in database response."}
@@ -170,6 +170,6 @@ def extract_untrusted_json(text_data: str) -> Optional[Any]:
 
 # async def main():
 #     result = await execute_supabase_sql("SELECT * FROM users where email = 'kpuneeth714@gmail.com';")
-#     print(f"Result: {result}")
+# #     print(f"Result: {result}")
 
 # asyncio.run(main())

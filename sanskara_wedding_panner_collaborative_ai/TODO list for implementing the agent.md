@@ -1,5 +1,4 @@
 Of course. This is a critical step for translating a complex architectural design into an actionable development plan.
-Here is a comprehensive implementation plan, broken down into phases, with sub-tasks and dedicated testing steps.
 ---
 ### **Phase 1: Foundation & Backend Setup**
 *   **Goal:** Establish the core infrastructure, database schema, and basic server environment.
@@ -25,35 +24,37 @@ Here is a comprehensive implementation plan, broken down into phases, with sub-t
 ---
 ### **Phase 2: The Setup & Onboarding Workflow**
 *   **Goal:** Implement the critical user onboarding and the automated setup process that prepares the system for the main agent interactions.
-*   **[ ] Task 5: Implement the Onboarding API Endpoint**
+*   **[x] Task 5: Implement the Onboarding API Endpoint**
 	- [x] Create a REST API endpoint (e.g., `/onboarding/submit`) that the frontend can call when a user completes the onboarding questionnaire.
 	- [x] Refactor `submit_onboarding_data` to decompose responsibilities into smaller, focused functions (`_handle_first_partner_submission`, `_handle_second_partner_submission`, `_update_existing_partner_details`).
 	- [x] Centralize SQL query construction using `db_queries.py` to separate SQL logic from business logic.
-	- [ ] This endpoint should handle data validation and store the raw onboarding JSON temporarily. - when both partners have submitted their data , use weddings table details jsonb column to store the onboarding data.
-	- [ ] Once both partners have submitted their data, it should trigger the `SetupAgent`.
-*   **[ ] Task 6: Implement the ****`SetupAgent`**** and its Tools**
-	- [ ] Create the `SetupAgent` class.
-	- [ ] Implement the master tool: `commit_and_activate_plan(onboarding_data)`.
-	- [ ] Implement the sub-functions used by the master tool:
-		- [ ] `bulk_create_workflows` (creates entries in the `workflows` table).
-		- [ ] `bulk_create_tasks_from_template` (the complex logic to generate tasks based on cultural background).
-		- [ ] `set_task_deadlines` (calculates due dates based on wedding date).
-		- [ ] `populate_initial_budget`.
-*   **[ ] Task 7: Orchestrate the Onboarding Flow**
-	- [ ] Wire the `/onboarding/submit` endpoint to trigger the `SetupAgent` _only_ after the second partner has submitted their data.
-	- [ ] Ensure the entire `SetupAgent` run is wrapped in a database transaction.
-*   **[ ] Task 8: Onboarding & Setup Testing**
-	- [ ] **Test:** Create mock onboarding JSON data for different cultural pairings (e.g., Maharashtrian/Punjabi, South Indian/Gujarati).
-	- [ ] **Test:** Write unit tests for the `SetupAgent`. For a given input, does it produce the expected number of tasks and workflows? Are the deadlines calculated correctly?
-	- [ ] **Test (End-to-End):** Call the API endpoint with mock data and verify in the Supabase dashboard that all tables (`workflows`, `tasks`, `budget_items`) are populated correctly and the wedding `status` is set to `'active'`.
+	- [x] This endpoint should handle data validation and store the raw onboarding JSON temporarily. - when both partners have submitted their data , use weddings table details jsonb column to store the onboarding data.
+	- [x] Once both partners have submitted their data, it should trigger the `SetupAgent`.
+*   **[x] Task 6: Implement the `SetupAgent` and its Tools**
+	- [x] Create the `SetupAgent` class.
+	- [x] Implement the master tool: `commit_and_activate_plan(onboarding_data)`.
+	- [x] Implement the sub-functions used by the master tool:
+		- [x] `bulk_create_workflows` (creates entries in the `workflows` table).
+		- [x] `bulk_create_tasks_from_template` (the complex logic to generate tasks based on cultural background).
+		- [x] `set_task_deadlines` (calculates due dates based on wedding date).
+		- [x] `populate_initial_budget`.
+*   **[x] Task 7: Orchestrate the Onboarding Flow**
+	- [x] Wire the `/onboarding/submit` endpoint to trigger the `SetupAgent` _only_ after the second partner has submitted their data.
+	- [x] Ensure the entire `SetupAgent` run is wrapped in a database transaction.
+*   **[x] Task 8: Onboarding & Setup Testing**
+	- [x] **Test:** Create mock onboarding JSON data for different cultural pairings (e.g., Maharashtrian/Punjabi, South Indian/Gujarati).
+	- [x] **Test:** Write unit tests for the `SetupAgent`. For a given input, does it produce the expected number of tasks and workflows? Are the deadlines calculated correctly?
+	- [x] **Test (End-to-End):** Call the API endpoint with mock data and verify in the Supabase dashboard that all tables (`workflows`, `tasks`, `budget_items`) are populated correctly and the wedding `status` is set to `'active'`.
 ---
 ### **Phase 3: The Orchestrator & The First Key Agent**
 *   **Goal:** Bring the main conversational agent online and empower it with its first critical capability: vendor management.
-*   **[ ] Task 9: Implement the ****`OrchestratorAgent`**
-	- [ ] Create the main `OrchestratorAgent` class within the ADK framework.
+*   **[ ] Task 9: Implement the `OrchestratorAgent`**
+	- [ ] Plan on the OrchestratorAgent logic , prompt , tools to use check the docs in sanskara_wedding_panner_collaborative_ai for overall architecture and agent funtionality
+	- [ ] Create the agent `OrchestratorAgent`  within the ADK framework - use referece_code/agent.py as reference code structure for agents but dont use the same code as it is different design.
 	- [ ] Implement its core logic for session management and context priming (querying `workflows` and `tasks` on startup).
-	- [ ] Connect the Orchestrator to the main WebSocket endpoint.
-*   **[ ] Task 10: Implement the ****`VendorManagementAgent`**
+	- [ ] Connect the Orchestrator to the main WebSocket endpoint .
+	- [ ] Test the Orchestrator's ability to handle basic messages and return a response.
+*   **[ ] Task 10: Implement the `VendorManagementAgent`**
 	- [ ] Create the `VendorManagementAgent` class. It will be treated as a "Smart Tool" by the Orchestrator.
 	- [ ] Implement its core tools as Python functions:
 		- [ ] `search_vendors()`
@@ -70,10 +71,10 @@ Here is a comprehensive implementation plan, broken down into phases, with sub-t
 ---
 ### **Phase 4: Expanding Capabilities & The Collaborative Loop**
 *   **Goal:** Implement the remaining agents and the critical "Lead and Review" collaboration workflow.
-*   **[ ] Task 13: Implement the ****`TaskAndTimelineAgent`**** & its Tools**
+*   **[ ] Task 13: Implement the `TaskAndTimelineAgent` & its Tools**
 	- [ ] Create the agent class.
 	- [ ] Implement its tools: `get_tasks`, `update_task_status`, `submit_task_feedback`, `approve_task_final_choice`. This is the backbone of collaboration.
-*   **[ ] Task 14: Implement the ****`GuestAndCommunicationAgent`**** & its Tools**
+*   **[ ] Task 14: Implement the `GuestAndCommunicationAgent` & its Tools**
 	- [ ] Create the agent class.
 	- [ ] Implement internal tools: `add_guest`, `update_guest_rsvp`.
 	- [ ] **(Complex Sub-task):** Integrate with an external service like Twilio for WhatsApp. Implement `send_whatsapp_message`. This involves handling API keys, templates, and error handling.
@@ -85,11 +86,8 @@ Here is a comprehensive implementation plan, broken down into phases, with sub-t
 	- [ ] This involves complex state management using the `tasks` table's status (`'pending_review'`, `'pending_final_approval'`).
 *   **[ ] Task 17: Collaboration & Multi-Agent Testing**
 	- [ ] **Test (Unit):** Test all new tools for the remaining agents.
-	- [ ] **Test (Collaboration E2E):** This requires a dedicated test script.
-		*   Simulate **User A (Bride)** logging in, shortlisting a vendor, and triggering the "Share for Review".
-		*   Verify the task status changes to `'pending_review'` and a notification would be sent.
-		*   Simulate **User B (Groom)** logging in, submitting feedback, and approving the final choice.
-		*   Verify all database states (`task_feedback`, `task_approvals`, `tasks.status='completed'`) are correct at the end of the flow.
+	- [ ] **Test (Integration):** Create a test script that directly invokes the `OrchestratorAgent`. Send it a message like "Find me a photographer" and assert that it correctly calls the `VendorManagementAgent`'s tool.
+	- [ ] **Test (E2E):** Connect via the WebSocket and have a full conversation about finding, shortlisting, and booking a vendor. Verify every database update in Supabase.
 ### **Phase 5: Deployment, Monitoring & Final Polish**
 *   **Goal:** Deploy the system, ensure it's robust, and add final touches.
 *   **[ ] Task 18: Containerize the Application**

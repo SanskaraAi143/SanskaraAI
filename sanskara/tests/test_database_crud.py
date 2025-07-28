@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 # --- IMPORTANT: Replace this placeholder with your actual execute_supabase_sql function ---
 # Example: from sanskara.shared_libraries.helpers import execute_supabase_sql
 # If running from sanskara/tests, and helpers is in sanskara/sanskara/shared_libraries
-from sanskara.shared_libraries.helpers import execute_supabase_sql
-
+#from sanskara.shared_libraries.helpers import execute_supabase_sql
+from sanskara.helpers import execute_supabase_sql
 # --- User Data for Testing (from your provided context) ---
 TEST_USER_ID = "fca04215-2af3-4a4e-bcfa-c27a4f54474c"
 TEST_SUPABASE_AUTH_UID = "4b73666f-3333-4838-a4ce-ce7eb1328543"

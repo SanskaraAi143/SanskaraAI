@@ -1,7 +1,8 @@
 import pytest
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
-from sanskara.shared_libraries.helpers import init_supabase_mcp, execute_supabase_sql, _supabase_mcp_toolset, _supabase_tools,extract_untrusted_json
+from sanskara.helpers import  init_supabase_mcp, execute_supabase_sql, _supabase_mcp_toolset, _supabase_tools,extract_untrusted_json
+
 import dotenv # Added import
 
 # Mock environment variables for testing
