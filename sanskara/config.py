@@ -15,7 +15,7 @@ AGENTOPS_API_KEY = os.getenv("AGENTOPS_API_KEY")
 # CORS Origins
 CORS_ORIGINS = [
     "http://localhost",
-    "http://localhost:8080",
+    "http://localhost:8030",
     "http://127.0.0.1",
     "http://127.0.0.1:8030",
     "https://sanskaraai.com",

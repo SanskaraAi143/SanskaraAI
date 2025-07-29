@@ -40,10 +40,9 @@ _mcp_session: Optional[MCPToolset] = None
 async def init_supabase_mcp() -> Tuple[Optional[MCPToolset], Optional[Dict[str, Any]]]:
     global _mcp_session, _supabase_mcp_toolset, _supabase_tools
 
-    if _mcp_session is not None:
-        logger.info("init_supabase_mcp: Closing existing MCP session.")
-        await _mcp_session.close()
-        _mcp_session = None # Clear the reference after closing
+    if _supabase_mcp_toolset and _supabase_tools:
+        logger.debug("init_supabase_mcp: Supabase MCP toolset already initialized. Reusing existing session.")
+        return _supabase_mcp_toolset, _supabase_tools
 
     logger.info("init_supabase_mcp: Attempting to initialize Supabase MCP toolset.")
     if not SUPABASE_ACCESS_TOKEN:
@@ -51,14 +50,22 @@ async def init_supabase_mcp() -> Tuple[Optional[MCPToolset], Optional[Dict[str, 
         raise ValueError("SUPABASE_ACCESS_TOKEN environment variable is not set.")
 
     try:
-        connection_params=StdioServerParameters(
-                command='/usr/bin/npx',
-                args=["-y", "@supabase/mcp-server-supabase@latest", "--access-token", SUPABASE_ACCESS_TOKEN],
-            )
-        mcp= MCPToolset(
-            connection_params=StdioConnectionParams(server_params=connection_params,timeout=20),tool_filter=["execute_sql"]
+        # Check if an MCP session exists and is active before trying to close it.
+        # This prevents errors if init_supabase_mcp is called multiple times without a successful init first.
+        if _mcp_session is not None and not _mcp_session.is_closed:
+            logger.info("init_supabase_mcp: Closing existing MCP session before re-initialization.")
+            await _mcp_session.close()
+            _mcp_session = None
+
+        connection_params = StdioServerParameters(
+            command='/usr/bin/npx',
+            args=["-y", "@supabase/mcp-server-supabase@latest", "--access-token", SUPABASE_ACCESS_TOKEN],
         )
-        _mcp_session = mcp # Assign the new MCPToolset instance to _mcp_session
+        mcp = MCPToolset(
+            connection_params=StdioConnectionParams(server_params=connection_params, timeout=20),
+            tool_filter=["execute_sql"]
+        )
+        _mcp_session = mcp  # Assign the new MCPToolset instance to _mcp_session
         tools = await mcp.get_tools()
         if not tools or "execute_sql" not in [tool.name for tool in tools]:
             logger.error("init_supabase_mcp: 'execute_sql' tool not found after MCP server connection.")
@@ -72,7 +79,7 @@ async def init_supabase_mcp() -> Tuple[Optional[MCPToolset], Optional[Dict[str, 
         logger.exception(f"init_supabase_mcp: Failed to initialize Supabase MCP toolset: {e}")
         _supabase_mcp_toolset = None
         _supabase_tools = None
-        _mcp_session = None # Ensure _mcp_session is also cleared on failure
+        _mcp_session = None  # Ensure _mcp_session is also cleared on failure
         raise RuntimeError(f"Failed to initialize Supabase MCP toolset: {e}") from e
 
     return _supabase_mcp_toolset, _supabase_tools
@@ -89,15 +96,24 @@ def sql_quote_value(val: Any) -> str:
     return f"'{val_str}'"
 
 
+import time
+
 async def execute_supabase_sql(sql: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    start_time = time.perf_counter()
     logger.debug(f"execute_supabase_sql: Received SQL: {sql}, Params: {params}")
     try:
         mcp_set, tools_map = await init_supabase_mcp()
         if not mcp_set or not tools_map:
-             return {"status": "error", "error": "Supabase MCP toolset not available."}
+            end_time = time.perf_counter()
+            duration = (end_time - start_time) * 1000
+            logger.error(f"execute_supabase_sql: Supabase MCP toolset not available. Duration: {duration:.2f}ms")
+            return {"status": "error", "error": "Supabase MCP toolset not available."}
 
         sql_tool = tools_map.get("execute_sql")
         if not sql_tool:
+            end_time = time.perf_counter()
+            duration = (end_time - start_time) * 1000
+            logger.error(f"execute_supabase_sql: Supabase MCP 'execute_sql' tool not found. Duration: {duration:.2f}ms")
             return {"status": "error", "error": "Supabase MCP 'execute_sql' tool not found."}
 
         final_sql = sql
@@ -113,6 +129,9 @@ async def execute_supabase_sql(sql: str, params: Optional[Dict[str, Any]] = None
 
         mcp_result = await sql_tool.run_async(args=mcp_args, tool_context=None)
         logger.debug(f"execute_supabase_sql: Raw result from MCP: {mcp_result}")
+        end_time = time.perf_counter()
+        duration = (end_time - start_time) * 1000
+        logger.info(f"execute_supabase_sql: Query executed successfully. Duration: {duration:.2f}ms. SQL: {sql[:50]}...")
 
         if hasattr(mcp_result, "error_message") and mcp_result.error_message:
             logger.error(f"execute_supabase_sql: MCP tool returned an error: {mcp_result.error_message}")

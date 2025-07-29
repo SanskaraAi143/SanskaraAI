@@ -13,8 +13,28 @@ END;
 $$ LANGUAGE plpgsql;
 
 ---------------------------------------------------------------------
--- USER SIDE TABLES (Minimal or No Breaking Changes Expected)
+-- CORE TABLES FOR COLLABORATION & STATE MANAGEMENT
 ---------------------------------------------------------------------
+
+-- The Wedding Table (The new central object for the entire application)
+CREATE TABLE weddings (
+    wedding_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    wedding_name VARCHAR(255) NOT NULL, -- e.g., "Priya & Rohan's Wedding"
+    wedding_date DATE,
+    wedding_location TEXT,
+    wedding_tradition TEXT,
+    wedding_style VARCHAR(100),
+    status VARCHAR(50) NOT NULL DEFAULT 'onboarding_in_progress', -- 'onboarding_in_progress', 'active', 'completed', 'archived'
+    details JSONB, -- Stores aggregated onboarding data, other partner email expected, etc.
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TRIGGER set_weddings_updated_at
+BEFORE UPDATE ON weddings
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp();
+
 
 -- Users Table (Links Supabase Auth to Application Profile - PRIMARILY CUSTOMERS)
 CREATE TABLE users (
@@ -22,23 +42,255 @@ CREATE TABLE users (
     supabase_auth_uid UUID UNIQUE NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE, -- Supabase Auth User ID
     email VARCHAR(255) UNIQUE NOT NULL,                 -- Synced from Supabase Auth
     display_name VARCHAR(255),                          -- User Profile Name
+    wedding_id UUID REFERENCES weddings(wedding_id) ON DELETE SET NULL, -- Link to the primary wedding
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    -- Wedding Details
-    wedding_date DATE,
-    wedding_location TEXT,
-    wedding_tradition TEXT,
     preferences JSONB, -- { "budget_min": 5000, "budget_max": 10000, ... }
     user_type VARCHAR(50) NOT NULL DEFAULT 'customer' -- New column to differentiate user types
 );
 CREATE INDEX idx_users_supabase_auth_uid ON users (supabase_auth_uid);
+CREATE INDEX idx_users_wedding_id ON users (wedding_id);
 
 CREATE TRIGGER set_users_updated_at
 BEFORE UPDATE ON users
 FOR EACH ROW
 EXECUTE FUNCTION trigger_set_timestamp();
 
--- Vendors Table (Global Vendor Directory - EDITED)
+-- Wedding Members Table (Links multiple users to a single wedding)
+CREATE TABLE wedding_members (
+    wedding_id UUID NOT NULL REFERENCES weddings(wedding_id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    role VARCHAR(50) NOT NULL, -- e.g., 'bride', 'groom', 'planner', 'bride_family', 'groom_family'
+    PRIMARY KEY (wedding_id, user_id) -- Ensures a user has only one role per wedding
+);
+
+
+-- Workflows Table (Long-term memory for high-level agent processes)
+CREATE TABLE workflows (
+    workflow_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    wedding_id UUID NOT NULL REFERENCES weddings(wedding_id) ON DELETE CASCADE,
+    workflow_name VARCHAR(100) NOT NULL, -- e.g., 'CoreVendorBookingWorkflow', 'GuestInvitationWorkflow'
+    status VARCHAR(50) NOT NULL DEFAULT 'not_started', -- 'not_started', 'in_progress', 'paused', 'awaiting_feedback', 'completed', 'failed'
+    context_summary JSONB, -- Stores key decisions and IDs to re-prime the agent's context
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_workflows_wedding_id_status ON workflows (wedding_id, status);
+
+CREATE TRIGGER set_workflows_updated_at
+BEFORE UPDATE ON workflows
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp();
+
+
+-- Tasks Table
+CREATE TABLE tasks (
+    task_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    wedding_id UUID NOT NULL REFERENCES weddings(wedding_id) ON DELETE CASCADE,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    is_complete BOOLEAN DEFAULT FALSE,
+    due_date DATE,
+    priority VARCHAR(10) DEFAULT 'medium',
+    category VARCHAR(100),
+    status VARCHAR(20) NOT NULL DEFAULT 'No Status',
+    lead_party VARCHAR(50), -- 'bride_side', 'groom_side', 'couple'
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_task_wedding_id_status ON tasks (wedding_id, is_complete);
+
+CREATE TRIGGER set_tasks_updated_at
+BEFORE UPDATE ON tasks
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp();
+
+
+-- Task Feedback Table (Supports the "Lead and Review" model for comments)
+CREATE TABLE task_feedback (
+    feedback_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    task_id UUID NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    feedback_type VARCHAR(50) NOT NULL, -- e.g., 'comment', 'like', 'dislike'
+    content TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_task_feedback_task_id ON task_feedback(task_id);
+
+
+-- Task Approvals Table (Supports the "Lead and Review" model for final sign-offs)
+CREATE TABLE task_approvals (
+    approval_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    task_id UUID NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+    approving_party VARCHAR(50) NOT NULL, -- 'bride_side', 'groom_side', 'couple'
+    status VARCHAR(50) NOT NULL DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
+    approved_by_user_id UUID REFERENCES users(user_id), -- Optional: who clicked the button
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TRIGGER set_task_approvals_updated_at
+BEFORE UPDATE ON task_approvals
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp();
+
+
+-- Budget Items Table
+CREATE TABLE budget_items (
+    item_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    wedding_id UUID NOT NULL REFERENCES weddings(wedding_id) ON DELETE CASCADE,
+    item_name TEXT NOT NULL,
+    category VARCHAR(100) NOT NULL,
+    amount DECIMAL(12, 2) NOT NULL,
+    vendor_name TEXT,
+    status VARCHAR(50) DEFAULT 'Pending',
+    contribution_by VARCHAR(50), -- 'bride_side', 'groom_side', 'shared'
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_budget_item_wedding_id ON budget_items (wedding_id);
+
+CREATE TRIGGER set_budget_items_updated_at
+BEFORE UPDATE ON budget_items
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp();
+
+
+-- Guest List Table
+CREATE TABLE guest_list (
+    guest_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    wedding_id UUID NOT NULL REFERENCES weddings(wedding_id) ON DELETE CASCADE,
+    guest_name TEXT NOT NULL,
+    contact_info TEXT,
+    relation TEXT,
+    side VARCHAR(50),
+    status VARCHAR(50) DEFAULT 'Pending',
+    dietary_requirements TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_guest_list_wedding_id ON guest_list (wedding_id);
+
+CREATE TRIGGER set_guest_list_updated_at
+BEFORE UPDATE ON guest_list
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp();
+
+
+-- Mood Boards Table
+CREATE TABLE mood_boards (
+    mood_board_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    wedding_id UUID NOT NULL REFERENCES weddings(wedding_id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL DEFAULT 'Wedding Mood Board',
+    description TEXT,
+    visibility VARCHAR(50) NOT NULL DEFAULT 'shared',
+    owner_party VARCHAR(50), -- 'bride_side', 'groom_side', 'couple'
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_mood_board_wedding_id ON mood_boards (wedding_id);
+
+CREATE TRIGGER set_mood_boards_updated_at
+BEFORE UPDATE ON mood_boards
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp();
+
+
+-- Mood Board Items Table
+CREATE TABLE mood_board_items (
+    item_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    mood_board_id UUID NOT NULL REFERENCES mood_boards(mood_board_id) ON DELETE CASCADE,
+    image_url TEXT NOT NULL,
+    note TEXT,
+    category VARCHAR(100) DEFAULT 'Decorations',
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_mood_board_item_board_id ON mood_board_items (mood_board_id);
+-- No updated_at for mood_board_items typically, but add if needed
+
+
+-- Timeline Events Table
+CREATE TABLE timeline_events (
+    event_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    wedding_id UUID NOT NULL REFERENCES weddings(wedding_id) ON DELETE CASCADE,
+    event_name TEXT NOT NULL,
+    event_date_time TIMESTAMPTZ NOT NULL,
+    location TEXT,
+    description TEXT,
+    visibility VARCHAR(50) NOT NULL DEFAULT 'shared', -- 'shared' or 'private'
+    relevant_party VARCHAR(50), -- 'bride_side', 'groom_side', 'couple'
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_timeline_events_wedding_id_datetime ON timeline_events (wedding_id, event_date_time);
+
+CREATE TRIGGER set_timeline_events_updated_at
+BEFORE UPDATE ON timeline_events
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp();
+
+
+-- Chat Sessions Table
+CREATE TABLE chat_sessions (
+    session_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    wedding_id UUID NOT NULL REFERENCES weddings(wedding_id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    summary JSONB NULL
+);
+CREATE INDEX idx_chat_sessions_wedding_id ON chat_sessions (wedding_id);
+CREATE INDEX idx_chat_sessions_summary_gin ON chat_sessions USING GIN (summary);
+
+CREATE TRIGGER set_chat_sessions_updated_at
+BEFORE UPDATE ON chat_sessions
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp(); -- Assuming last_updated_at should auto-update
+
+
+-- Chat Messages Table
+CREATE TABLE chat_messages (
+    message_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_id UUID NOT NULL REFERENCES chat_sessions(session_id) ON DELETE CASCADE,
+    sender_type VARCHAR(20) NOT NULL, -- 'user', 'assistant', 'system', 'tool'
+    sender_name VARCHAR(100) NOT NULL, -- Specific agent or user name
+    content JSONB NOT NULL,
+    timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_chat_message_session_id_ts ON chat_messages (session_id, timestamp);
+
+
+-- User Shortlisted Vendors Table (User's selected/tracked vendors)
+CREATE TABLE user_shortlisted_vendors (
+    user_vendor_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    wedding_id UUID NOT NULL REFERENCES weddings(wedding_id) ON DELETE CASCADE,
+    vendor_name TEXT NOT NULL,
+    vendor_category VARCHAR(100) NOT NULL,
+    contact_info TEXT,
+    status VARCHAR(50) NOT NULL DEFAULT 'contacted',
+    booked_date DATE,
+    notes TEXT,
+    linked_vendor_id UUID REFERENCES vendors(vendor_id) NULL,
+    estimated_cost DECIMAL(12,2) NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_user_shortlisted_vendors_wedding_id ON user_shortlisted_vendors (wedding_id);
+CREATE INDEX idx_user_shortlisted_vendors_vendor_name ON user_shortlisted_vendors USING gin (vendor_name gin_trgm_ops);
+CREATE INDEX idx_user_shortlisted_vendors_vendor_category ON user_shortlisted_vendors (vendor_category);
+
+CREATE TRIGGER set_user_shortlisted_vendors_updated_at
+BEFORE UPDATE ON user_shortlisted_vendors
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp();
+
+
+---------------------------------------------------------------------
+-- VENDOR SIDE TABLES
+---------------------------------------------------------------------
+
+-- Vendors Table (Global Vendor Directory)
 CREATE TABLE vendors (
     vendor_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     vendor_name VARCHAR(255) NOT NULL,
@@ -63,195 +315,12 @@ CREATE TABLE vendors (
 CREATE INDEX idx_vendor_category ON vendors (vendor_category);
 CREATE INDEX idx_vendor_city ON vendors USING gin ((address ->> 'city'));
 CREATE INDEX idx_gin_vendor_name_trgm ON vendors USING gin (vendor_name gin_trgm_ops);
-CREATE INDEX idx_vendors_supabase_auth_uid ON vendors (supabase_auth_uid) WHERE supabase_auth_uid IS NOT NULL; -- Index on the auth uid
+CREATE INDEX idx_vendors_supabase_auth_uid ON vendors (supabase_auth_uid) WHERE supabase_auth_uid IS NOT NULL;
 
 CREATE TRIGGER set_vendors_updated_at
 BEFORE UPDATE ON vendors
 FOR EACH ROW
 EXECUTE FUNCTION trigger_set_timestamp();
-
--- User Shortlisted Vendors Table (User's selected/tracked vendors - EDITED)
-CREATE TABLE user_shortlisted_vendors (
-    user_vendor_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    vendor_name TEXT NOT NULL,
-    vendor_category VARCHAR(100) NOT NULL, -- Changed TEXT to VARCHAR(100) for consistency
-    contact_info TEXT,
-    status VARCHAR(50) NOT NULL DEFAULT 'contacted', -- 'contacted', 'quoted', 'visit_scheduled', 'liked', 'disliked', 'negotiating'
-    booked_date DATE,
-    notes TEXT,
-    linked_vendor_id UUID REFERENCES vendors(vendor_id) NULL,
-    estimated_cost DECIMAL(12,2) NULL,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX idx_user_shortlisted_vendors_user_id ON user_shortlisted_vendors (user_id); -- Renamed index
-CREATE INDEX idx_user_shortlisted_vendors_vendor_name ON user_shortlisted_vendors USING gin (vendor_name gin_trgm_ops); -- Renamed index
-CREATE INDEX idx_user_shortlisted_vendors_vendor_category ON user_shortlisted_vendors (vendor_category); -- Renamed index
-
-CREATE TRIGGER set_user_shortlisted_vendors_updated_at
-BEFORE UPDATE ON user_shortlisted_vendors
-FOR EACH ROW
-EXECUTE FUNCTION trigger_set_timestamp();
-
--- Chat Sessions Table (NO CHANGE)
-CREATE TABLE chat_sessions (
-    session_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    last_updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    summary TEXT NULL
-);
-CREATE INDEX idx_chat_sessions_user_id ON chat_sessions (user_id);
-
-CREATE TRIGGER set_chat_sessions_updated_at
-BEFORE UPDATE ON chat_sessions
-FOR EACH ROW
-EXECUTE FUNCTION trigger_set_timestamp(); -- Assuming last_updated_at should auto-update
-
--- Chat Messages Table (NO CHANGE)
-CREATE TABLE chat_messages (
-    message_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    session_id UUID NOT NULL REFERENCES chat_sessions(session_id) ON DELETE CASCADE,
-    sender_type VARCHAR(20) NOT NULL, -- 'user', 'assistant', 'system', 'tool'
-    sender_name VARCHAR(100) NOT NULL, -- Specific agent or user name
-    content JSONB NOT NULL,
-    timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX idx_chat_message_session_id_ts ON chat_messages (session_id, timestamp);
-
--- Tasks Table (NO CHANGE - these are user-specific tasks)
-CREATE TABLE tasks (
-    task_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    title VARCHAR(255) NOT NULL,
-    description TEXT,
-    is_complete BOOLEAN DEFAULT FALSE,
-    due_date DATE,
-    priority VARCHAR(10) DEFAULT 'medium',
-    category VARCHAR(100),
-    status VARCHAR(20) NOT NULL DEFAULT 'No Status',
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX idx_task_user_id_status ON tasks (user_id, is_complete);
-
-CREATE TRIGGER set_tasks_updated_at
-BEFORE UPDATE ON tasks
-FOR EACH ROW
-EXECUTE FUNCTION trigger_set_timestamp();
-
--- Mood Boards Table (NO CHANGE)
-CREATE TABLE mood_boards (
-    mood_board_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    name VARCHAR(255) NOT NULL DEFAULT 'Wedding Mood Board',
-    description TEXT,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX idx_mood_board_user_id ON mood_boards (user_id);
-
-CREATE TRIGGER set_mood_boards_updated_at
-BEFORE UPDATE ON mood_boards
-FOR EACH ROW
-EXECUTE FUNCTION trigger_set_timestamp();
-
--- Mood Board Items Table (NO CHANGE)
-CREATE TABLE mood_board_items (
-    item_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    mood_board_id UUID NOT NULL REFERENCES mood_boards(mood_board_id) ON DELETE CASCADE,
-    image_url TEXT NOT NULL,
-    note TEXT,
-    category VARCHAR(100) DEFAULT 'Decorations',
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX idx_mood_board_item_board_id ON mood_board_items (mood_board_id);
--- No updated_at for mood_board_items typically, but add if needed
-
--- Budget Items Table (NO CHANGE)
-CREATE TABLE budget_items (
-    item_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    item_name TEXT NOT NULL,
-    category VARCHAR(100) NOT NULL,
-    amount DECIMAL(12, 2) NOT NULL,
-    vendor_name TEXT,
-    status VARCHAR(50) DEFAULT 'Pending',
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX idx_budget_item_user_id ON budget_items (user_id);
-
-CREATE TRIGGER set_budget_items_updated_at
-BEFORE UPDATE ON budget_items
-FOR EACH ROW
-EXECUTE FUNCTION trigger_set_timestamp();
-
--- Guest List Table (NO CHANGE)
-CREATE TABLE guest_list (
-    guest_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    guest_name TEXT NOT NULL,
-    contact_info TEXT,
-    relation TEXT,
-    side VARCHAR(50),
-    status VARCHAR(50) DEFAULT 'Pending',
-    dietary_requirements TEXT,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX idx_guest_list_user_id ON guest_list (user_id);
-
-CREATE TRIGGER set_guest_list_updated_at
-BEFORE UPDATE ON guest_list
-FOR EACH ROW
-EXECUTE FUNCTION trigger_set_timestamp();
-
--- Timeline Events Table (NO CHANGE)
-CREATE TABLE timeline_events (
-    event_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    event_name TEXT NOT NULL,
-    event_date_time TIMESTAMPTZ NOT NULL,
-    location TEXT,
-    description TEXT,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX idx_timeline_events_user_id_datetime ON timeline_events (user_id, event_date_time);
-
-CREATE TRIGGER set_timeline_events_updated_at
-BEFORE UPDATE ON timeline_events
-FOR EACH ROW
-EXECUTE FUNCTION trigger_set_timestamp();
-
----------------------------------------------------------------------
--- SUPABASE AUTH TRIGGER
----------------------------------------------------------------------
-
--- For creating a basic profile in 'users' table when a new Supabase auth user is created.
--- This profile is primarily for customers. Vendor staff will also get this basic profile,
--- but their access to the vendor portal is governed by the 'vendor_staff' table.
-CREATE OR REPLACE FUNCTION public.handle_new_auth_user()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO public.users (supabase_auth_uid, email, display_name)
-    VALUES (new.id, new.email, new.raw_user_meta_data->>'display_name') -- Attempt to get display_name if available
-    ON CONFLICT (supabase_auth_uid) DO NOTHING; -- If user already exists (e.g. from a different flow), do nothing.
-    RETURN new;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Drop existing trigger if it exists to avoid issues, then re-create
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-CREATE TRIGGER on_auth_user_created
-AFTER INSERT ON auth.users
-FOR EACH ROW EXECUTE PROCEDURE public.handle_new_auth_user();
-
----------------------------------------------------------------------
--- VENDOR SIDE TABLES (NEW and for Vendor Portal)
----------------------------------------------------------------------
 
 -- Vendor Staff / Team Members (for login and roles within a vendor's organization)
 CREATE TABLE vendor_staff (
@@ -324,7 +393,8 @@ EXECUTE FUNCTION trigger_set_timestamp();
 -- Bookings Table (Formal agreement between User and Vendor)
 CREATE TABLE bookings (
     booking_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    wedding_id UUID NOT NULL REFERENCES weddings(wedding_id) ON DELETE CASCADE, -- Link to wedding
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE, -- User who made the booking
     vendor_id UUID NOT NULL REFERENCES vendors(vendor_id) ON DELETE CASCADE,
     user_shortlisted_vendor_id UUID NULL REFERENCES user_shortlisted_vendors(user_vendor_id) ON DELETE SET NULL,
     event_date DATE NOT NULL,
@@ -340,6 +410,7 @@ CREATE TABLE bookings (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX idx_bookings_wedding_id ON bookings (wedding_id);
 CREATE INDEX idx_bookings_user_id ON bookings (user_id);
 CREATE INDEX idx_bookings_vendor_id ON bookings (vendor_id);
 CREATE INDEX idx_bookings_event_date ON bookings (event_date);
@@ -523,26 +594,18 @@ BEFORE UPDATE ON vendor_staff_availability
 FOR EACH ROW
 EXECUTE FUNCTION trigger_set_timestamp();
 
--- -- can you give sql query to delete all tables of user related one i gave
--- DROP TABLE IF EXISTS public.users CASCADE;
--- DROP TABLE IF EXISTS public.vendors CASCADE;
--- DROP TABLE IF EXISTS public.vendor_staff CASCADE;
--- DROP TABLE IF EXISTS public.vendor_services CASCADE;
--- DROP TABLE IF EXISTS public.vendor_availability CASCADE;
--- DROP TABLE IF EXISTS public.user_shortlisted_vendors CASCADE;
--- DROP TABLE IF EXISTS public.chat_sessions CASCADE;
--- DROP TABLE IF EXISTS public.chat_messages CASCADE;
--- DROP TABLE IF EXISTS public.tasks CASCADE;
--- DROP TABLE IF EXISTS public.mood_boards CASCADE;
--- DROP TABLE IF EXISTS public.mood_board_items CASCADE;
--- DROP TABLE IF EXISTS public.budget_items CASCADE;
--- DROP TABLE IF EXISTS public.guest_list CASCADE;
--- DROP TABLE IF EXISTS public.timeline_events CASCADE;
--- DROP TABLE IF EXISTS public.bookings CASCADE;
--- DROP TABLE IF EXISTS public.booking_services CASCADE;
--- DROP TABLE IF EXISTS public.payments CASCADE;
--- DROP TABLE IF EXISTS public.vendor_tasks CASCADE;
--- DROP TABLE IF EXISTS public.reviews CASCADE;
--- DROP TABLE IF EXISTS public.notifications CASCADE;
--- DROP TABLE IF EXISTS public.task_templates CASCADE;
+-- SUPABASE AUTH TRIGGER
+CREATE OR REPLACE FUNCTION public.handle_new_auth_user()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO public.users (supabase_auth_uid, email, display_name)
+    VALUES (new.id, new.email, new.raw_user_meta_data->>'display_name')
+    ON CONFLICT (supabase_auth_uid) DO NOTHING;
+    RETURN new;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+AFTER INSERT ON auth.users
+FOR EACH ROW EXECUTE PROCEDURE public.handle_new_auth_user();

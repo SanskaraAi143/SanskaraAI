@@ -9,44 +9,39 @@ class TeamworkPlan(BaseModel):
     guest_list: str
     sangeet_entertainment: str
 
-class PartnerDetails(BaseModel):
+class WeddingDetails(BaseModel):
+    wedding_name: str
+    wedding_date: date
+    wedding_location: Optional[str] = None
+    wedding_tradition: Optional[str] = None
+    wedding_style: Optional[str] = None
+
+class CurrentUserOnboardingDetails(BaseModel):
     """
-    Represents the detailed information collected from the partner filling out the form.
-    This corresponds to the 'current_partner_details' object in the payload.
+    Represents the detailed information collected from the current user filling out the form.
+    This corresponds to the 'current_user_onboarding_details' object in the payload.
     """
-    # --- Step 1: Core Foundation ---
     name: str
     email: str
     phone: Optional[str] = None
     role: str  # "Bride" or "Groom"
-    partner_name: str
-    partner_email: str
-    wedding_city: str
-    wedding_date: date
-
-    # --- Step 2: Vision & Vibe ---
-    wedding_style: Optional[str] = None
-    other_style: Optional[str] = None
-    color_theme: Optional[str] = None
-    attire_main: Optional[str] = None
-    attire_other: Optional[str] = None
-
-    # --- Step 3: Cultural Heartbeat ---
     cultural_background: str
     ceremonies: List[str] = []
     custom_instructions: Optional[str] = None
-
-    # --- Step 4: Teamwork Plan ---
     teamwork_plan: TeamworkPlan
-
-    # --- Step 5: Budget & Priorities ---
     guest_estimate: Optional[str] = None
     guest_split: Optional[str] = None
     budget_range: Optional[str] = None
     budget_flexibility: str
     priorities: List[str] = []
 
-# MODEL 2: For the SECOND partner's submission (new and streamlined)
+class PartnerOnboardingDetails(BaseModel):
+    """
+    Represents the initial contact information for the second partner, provided by the first partner.
+    """
+    name: str
+    email: str
+
 class SecondPartnerDetails(BaseModel):
     """The focused details provided ONLY by the second partner."""
     name: str
@@ -59,10 +54,10 @@ class SecondPartnerDetails(BaseModel):
     teamwork_agreement: bool # The crucial consensus flag
 
 class OnboardingSubmission(BaseModel):
-    current_partner_email: str
-    other_partner_email: Optional[str] = None # Provided by the first partner
-    current_partner_details: PartnerDetails
+    wedding_details: WeddingDetails
+    current_user_onboarding_details: CurrentUserOnboardingDetails
+    partner_onboarding_details: PartnerOnboardingDetails
 
 class SecondPartnerSubmission(BaseModel):
-    current_partner_email: str
+    wedding_id: str
     current_partner_details: SecondPartnerDetails

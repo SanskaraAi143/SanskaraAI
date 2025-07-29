@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 def get_wedding_by_expected_partner_email_query(email: str) -> str:
     return f"""
@@ -17,40 +17,79 @@ def get_user_and_wedding_info_by_email_query(email: str) -> str:
         WHERE u.email = '{email}';
     """
 
-def create_wedding_query(current_partner_email: str, details_json: str, other_partner_email: str) -> str:
+def create_wedding_query(
+    wedding_name: str,
+    wedding_date: str,
+    wedding_location: Optional[str],
+    wedding_tradition: Optional[str],
+    details_json: str,
+    wedding_style: Optional[str] = None
+) -> str:
     return f"""
-        INSERT INTO weddings (wedding_name, status, details)
+        INSERT INTO weddings (wedding_name, wedding_date, wedding_location, wedding_tradition, wedding_style, status, details)
         VALUES (
-            'Unnamed Wedding',
+            '{wedding_name}',
+            '{wedding_date}',
+            {f"'{wedding_location}'" if wedding_location is not None else 'NULL'},
+            {f"'{wedding_tradition}'" if wedding_tradition is not None else 'NULL'},
+            {f"'{wedding_style}'" if wedding_style is not None else 'NULL'},
             'onboarding_in_progress',
-            '{{ "partner_data": {{ "{current_partner_email}": {details_json} }}, "other_partner_email_expected": "{other_partner_email}" }}'::jsonb
+            '{details_json}'::jsonb
         )
         RETURNING wedding_id;
     """
 
-def update_wedding_details_query(
-    wedding_id: str,
-    current_partner_email: str,
-    details_json: str,
-    wedding_name: str = None,
-    wedding_date: str = None
-) -> str:
-    updates = [
-        f"details = jsonb_set(COALESCE(details, '{{}}'::jsonb), '{{partner_data, \"{current_partner_email}\"}}', '{details_json}'::jsonb, true)"
-    ]
-    if wedding_name:
-        updates.append(f"wedding_name = '{wedding_name}'")
-    if wedding_date:
-        updates.append(f"wedding_date = '{wedding_date}'")
+def update_wedding_details_jsonb_query(wedding_id: str, details_json: str) -> str:
+    return f"""
+        UPDATE weddings
+        SET details = '{details_json}'::jsonb,
+            updated_at = NOW()
+        WHERE wedding_id = '{wedding_id}'
+        RETURNING wedding_id;
+    """
 
-    updates_str = ", ".join(updates)
+def update_wedding_details_jsonb_field_query(wedding_id: str, field_path: List[str], value: Any) -> str:
+    # field_path should be a list of strings representing the path to the JSONB field, e.g., ["other_partner_email_expected"] or ["partner_data", "some_email"]
+    # value should be the new value for that field (will be cast to JSONB)
+    
+    path_str = "{" + ", ".join([f'"{p}"' for p in field_path]) + "}"
+    
+    if isinstance(value, dict) or isinstance(value, list):
+        value_str = f"'{json.dumps(value)}'::jsonb"
+    elif isinstance(value, str):
+        value_str = f"'{value}'"
+    elif value is None:
+        value_str = "NULL"
+    else:
+        value_str = str(value)
 
+    return f"""
+        UPDATE weddings
+        SET details = jsonb_set(COALESCE(details, '{{}}'::jsonb), '{path_str}', {value_str}, true),
+            updated_at = NOW()
+        WHERE wedding_id = '{wedding_id}'
+        RETURNING wedding_id;
+    """
+
+def update_wedding_fields_query(wedding_id: str, updates: Dict[str, Any]) -> str:
+    set_clauses = []
+    for key, value in updates.items():
+        if isinstance(value, str):
+            set_clauses.append(f"{key} = '{value}'")
+        elif isinstance(value, bool):
+            set_clauses.append(f"{key} = {value}")
+        elif value is None:
+            set_clauses.append(f"{key} = NULL")
+        else:
+            set_clauses.append(f"{key} = {value}")
+    
+    updates_str = ", ".join(set_clauses)
+    
     return f"""
         UPDATE weddings
         SET {updates_str},
             updated_at = NOW()
-        WHERE wedding_id = '{wedding_id}'
-        RETURNING wedding_id;
+        WHERE wedding_id = '{wedding_id}';
     """
 
 def add_wedding_member_query(user_id: str, wedding_id: str, role: str) -> str:
@@ -486,18 +525,21 @@ def search_vendors_query(category: str, city: str, budget_range: Dict[str, float
     if category:
         where_clauses.append(f"vendor_category = '{category}'")
     if city:
-        # Assuming a 'city' column exists in the vendors table or similar
-        where_clauses.append(f"city = '{city}'")
+        where_clauses.append(f"(address->>'city') ILIKE '%{city}%'")
     if budget_range:
         if "min" in budget_range:
-            where_clauses.append(f"estimated_cost >= {budget_range['min']}")
+            where_clauses.append(f"pricing_range->>'min' >= '{budget_range['min']}'::float")
         if "max" in budget_range:
-            where_clauses.append(f"estimated_cost <= {budget_range['max']}")
+            where_clauses.append(f"pricing_range->>'max' <= '{budget_range['max']}'::float")
     if style_keywords:
-        # Assuming style_keywords can be matched against a 'style' or 'tags' column
-        # This is a simplified example; a real implementation might use array intersection or full-text search
+        # Using pg_trgm for fuzzy matching on vendor_name and description, and a hypothetical style_tags in details
+        keyword_clauses = []
         for keyword in style_keywords:
-            where_clauses.append(f"style_tags ILIKE '%{keyword}%'")
+            keyword_clauses.append(f"vendor_name ILIKE '%{keyword}%'")
+            keyword_clauses.append(f"description ILIKE '%{keyword}%'")
+            # Assuming style_tags is a string field within the details JSONB
+            keyword_clauses.append(f"(details->>'style_tags') ILIKE '%{keyword}%'")
+        where_clauses.append(f"({' OR '.join(keyword_clauses)})")
 
     where_clause_str = " AND ".join(where_clauses)
 
@@ -517,7 +559,7 @@ def get_vendor_details_query(vendor_id: str) -> str:
         WHERE vendor_id = '{vendor_id}';
     """
 
-def add_to_shortlist_query(wedding_id: str, user_id: str, vendor_id: str, vendor_name: str, vendor_category: str) -> str:
+def add_to_shortlist_query(wedding_id: str, vendor_id: str, vendor_name: str, vendor_category: str) -> str:
     """
     Constructs a SQL query to add a vendor to a user's shortlist.
     """

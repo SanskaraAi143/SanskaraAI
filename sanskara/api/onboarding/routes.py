@@ -1,6 +1,6 @@
 import logging
 from fastapi import APIRouter, HTTPException
-from api.onboarding.models import OnboardingSubmission, SecondPartnerSubmission
+from api.onboarding.models import OnboardingSubmission, SecondPartnerSubmission, CurrentUserOnboardingDetails, WeddingDetails, PartnerOnboardingDetails
 from sanskara.helpers import execute_supabase_sql
 import sanskara.db_queries as db_queries
 from api.onboarding.services import (
@@ -14,19 +14,24 @@ onboarding_router = APIRouter()
 
 @onboarding_router.post("/submit")
 async def submit_onboarding_data(submission: OnboardingSubmission | SecondPartnerSubmission):
-    logger.info(f"Received onboarding submission from {submission.current_partner_email}")
+    logger.info(f"Received onboarding submission.")
 
-    current_partner_email = submission.current_partner_email
-    other_partner_email = None
-    if type(submission) is OnboardingSubmission:
-        other_partner_email = submission.other_partner_email
+    user_email = None
+    user_role = None
+    wedding_id = None
 
-    current_partner_details_json = submission.current_partner_details.model_dump_json()
+    if isinstance(submission, OnboardingSubmission):
+        user_email = submission.current_user_onboarding_details.email
+        user_role = submission.current_user_onboarding_details.role
+    elif isinstance(submission, SecondPartnerSubmission):
+        user_email = submission.current_partner_details.email
+        user_role = submission.current_partner_details.role
+        wedding_id = submission.wedding_id
 
-    # Extract role from the submission details
-    current_partner_role = submission.current_partner_details.role
+    if not user_email:
+        raise HTTPException(status_code=400, detail="User email not provided in submission.")
 
-    user_query_result = await execute_supabase_sql(db_queries.get_user_and_wedding_info_by_email_query(current_partner_email))
+    user_query_result = await execute_supabase_sql(db_queries.get_user_and_wedding_info_by_email_query(user_email))
     existing_user_data = user_query_result.get("data")
 
     user_id = None
@@ -35,22 +40,29 @@ async def submit_onboarding_data(submission: OnboardingSubmission | SecondPartne
 
     if existing_user_data:
         user_id = existing_user_data[0].get("user_id")
-        existing_wedding_id = existing_user_data[0].get("wedding_id") # This will now come from wedding_members join
+        existing_wedding_id = existing_user_data[0].get("wedding_id")
         existing_role = existing_user_data[0].get("role")
 
     if not user_id:
-        logger.error(f"User with email {current_partner_email} not found in the users table.")
-        raise HTTPException(status_code=404, detail=f"User with email {current_partner_email} not found. Please ensure you have signed up.")
+        logger.error(f"User with email {user_email} not found in the users table.")
+        raise HTTPException(status_code=404, detail=f"User with email {user_email} not found. Please ensure you have signed up.")
 
-    if existing_wedding_id:
+    if existing_wedding_id and wedding_id and existing_wedding_id != wedding_id:
+        raise HTTPException(status_code=400, detail="User is already associated with a different wedding.")
+    elif existing_wedding_id:
         # User exists and is already linked to a wedding via wedding_members
-        return await _update_existing_partner_details(current_partner_email, current_partner_details_json, existing_wedding_id, user_id, current_partner_role)
-    elif other_partner_email:
-        # First partner submission
-        return await _handle_first_partner_submission(current_partner_email, current_partner_details_json, other_partner_email)
+        # This branch handles re-submission by an already onboarded user
+        return await _update_existing_partner_details(user_id, existing_wedding_id, user_email, user_role, submission)
+    elif isinstance(submission, OnboardingSubmission):
+        # First partner submission (new wedding creation)
+        if submission.current_user_onboarding_details.email == submission.partner_onboarding_details.email:
+            raise HTTPException(status_code=400, detail="Current user and partner cannot have the same email address.")
+        return await _handle_first_partner_submission(user_id, submission.wedding_details, submission.current_user_onboarding_details, submission.partner_onboarding_details)
+    elif isinstance(submission, SecondPartnerSubmission):
+        # Second partner submission (joining existing wedding)
+        return await _handle_second_partner_submission(user_id, submission.wedding_id, submission.current_partner_details)
     else:
-        # Second partner submission
-        return await _handle_second_partner_submission(current_partner_email, current_partner_details_json)
+        raise HTTPException(status_code=400, detail="Invalid submission type or missing information.")
 
 @onboarding_router.get("/partner-details")
 async def get_partner_details(email: str):
@@ -66,19 +78,14 @@ async def get_partner_details(email: str):
 
     wedding_id = wedding_data[0]["wedding_id"]
     wedding_details = wedding_data[0]["details"]
-    partner_data = wedding_details.get("partner_data", {})
     other_partner_email_expected = wedding_details.get("other_partner_email_expected")
 
-    first_partner_email = None
-    # Determine who the first partner was (the one who provided other_partner_email_expected)
-    for p_email, p_details in partner_data.items():
-        if p_email != other_partner_email_expected:
-            first_partner_email = p_email
-            break
-
     first_partner_info = {}
-    if first_partner_email and first_partner_email in partner_data:
-        first_partner_info = partner_data[first_partner_email]
+    if wedding_details.get("partner_data"):
+        for p_email, p_details in wedding_details["partner_data"].items():
+            if p_email != other_partner_email_expected:
+                first_partner_info = p_details
+                break
 
     # Placeholder for proposed plan/responsibilities
     proposed_plan = {

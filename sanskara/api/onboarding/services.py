@@ -6,13 +6,46 @@ from fastapi import HTTPException
 
 from sanskara.helpers import execute_supabase_sql
 import sanskara.db_queries as db_queries
-from api.onboarding.models import PartnerDetails, SecondPartnerDetails
+from api.onboarding.models import CurrentUserOnboardingDetails, SecondPartnerDetails, WeddingDetails, PartnerOnboardingDetails,OnboardingSubmission, SecondPartnerSubmission
 from tests.test_setup_agent_invocation import run_setup_agent_test # TODO: Remove test import
 
 logger = logging.getLogger(__name__)
 
-async def _update_wedding_details(wedding_id: str, current_partner_email: str, current_partner_details_json: str):
-    update_wedding_sql = db_queries.update_wedding_details_query(wedding_id, current_partner_email, current_partner_details_json)
+async def _update_wedding_details(wedding_id: str,
+                                  current_user_email: str,
+                                  current_user_onboarding_details: CurrentUserOnboardingDetails = None,
+                                  second_partner_details: SecondPartnerDetails = None,
+                                  remove_other_partner_email_expected: bool = False):
+    # Fetch existing wedding details to merge
+    existing_wedding_query = await execute_supabase_sql(db_queries.get_wedding_details_query(wedding_id))
+    if existing_wedding_query.get("status") == "error" or not existing_wedding_query.get("data"):
+        logger.error(f"Failed to fetch existing wedding details for update: {existing_wedding_query.get('error')}")
+        raise HTTPException(status_code=500, detail="Failed to fetch existing wedding details.")
+
+    existing_details = existing_wedding_query["data"][0].get("details", {})
+    logger.debug(f"_update_wedding_details: Initial existing_details: {existing_details}")
+
+    partner_data = existing_details.get("partner_data", {})
+
+    if current_user_onboarding_details:
+        partner_data[current_user_email] = current_user_onboarding_details.model_dump()
+        logger.debug(f"_update_wedding_details: Updated partner_data with current_user_onboarding_details: {partner_data}")
+    elif second_partner_details:
+        partner_data[current_user_email] = second_partner_details.model_dump()
+        logger.debug(f"_update_wedding_details: Updated partner_data with second_partner_details: {partner_data}")
+
+    existing_details["partner_data"] = partner_data
+
+    if remove_other_partner_email_expected:
+        if "other_partner_email_expected" in existing_details:
+            del existing_details["other_partner_email_expected"]
+            logger.debug(f"_update_wedding_details: Removed other_partner_email_expected.")
+
+    logger.debug(f"_update_wedding_details: Final existing_details before DB update: {existing_details}")
+    update_wedding_sql = db_queries.update_wedding_details_jsonb_query(
+        wedding_id,
+        json.dumps(existing_details)
+    )
     update_result = await execute_supabase_sql(update_wedding_sql)
     if update_result.get("status") == "error":
         logger.error(f"Failed to update wedding details: {update_result.get('error')}")
@@ -58,66 +91,121 @@ async def _check_and_trigger_setup_agent(wedding_id: str, current_partner_email:
     else:
         return {"message": "Onboarding data updated. Waiting for other partner.", "wedding_id": str(wedding_id)}
 
-async def _handle_first_partner_submission(email: str, details_json: str, other_partner_email: str):
-    create_wedding_sql = db_queries.create_wedding_query(email, details_json, other_partner_email)
+async def _handle_first_partner_submission(user_id: str,
+                                           wedding_details: WeddingDetails,
+                                           current_user_onboarding_details: CurrentUserOnboardingDetails,
+                                           partner_onboarding_details: PartnerOnboardingDetails):
+    # Store other_partner_email_expected in the details JSONB
+    initial_details = {
+        "partner_data": {
+            current_user_onboarding_details.email: current_user_onboarding_details.model_dump()
+        },
+        "partner_onboarding_details": partner_onboarding_details.model_dump(),
+        "other_partner_email_expected": partner_onboarding_details.email
+    }
+    logger.debug(f"_handle_first_partner_submission: initial_details for new wedding: {initial_details}")
+
+    create_wedding_sql = db_queries.create_wedding_query(
+        wedding_details.wedding_name,
+        wedding_details.wedding_date.isoformat(),
+        wedding_details.wedding_location,
+        wedding_details.wedding_tradition,
+        json.dumps(initial_details), # Pass the complete initial JSONB
+        wedding_details.wedding_style
+    )
+    logger.debug(f"_handle_first_partner_submission: create_wedding_sql: {create_wedding_sql}")
     create_result = await execute_supabase_sql(create_wedding_sql)
     if create_result.get("status") == "error" or not create_result.get("data"):
         logger.error(f"Failed to create new wedding: {create_result.get('error')}")
         raise HTTPException(status_code=500, detail="Failed to create new wedding.")
 
     wedding_id = create_result["data"][0]["wedding_id"]
-    logger.info(f"New wedding created with ID: {wedding_id} for {email}. Other partner expected: {other_partner_email}")
+    logger.info(f"New wedding created with ID: {wedding_id} for {current_user_onboarding_details.email}. Other partner expected: {partner_onboarding_details.email}")
 
-    # We need the user_id from the users table to link to wedding_members
-    user_query = await execute_supabase_sql(db_queries.get_user_and_wedding_info_by_email_query(email))
-    user_data = user_query.get("data")
-    if not user_data:
-        logger.error(f"User with email {email} not found after wedding creation.")
-        raise HTTPException(status_code=500, detail="User not found after wedding creation.")
-    user_id = user_data[0]["user_id"]
+    await _link_user_to_wedding(user_id, wedding_id, current_user_onboarding_details.role)
 
-    # The role for the first partner is extracted from PartnerDetails
-    first_partner_details_obj = PartnerDetails.model_validate(json.loads(details_json))
-    role = first_partner_details_obj.role
-
-    await _link_user_to_wedding(user_id, wedding_id, role)
+    # Update the user's entry to set wedding_id and remove old fields (handled by migration script, but API should not expect them)
+    # This part is implicitly handled by the user's instruction that these are removed by migration.
+    # The API just needs to ensure it doesn't send them.
 
     return {"message": "First partner data received. Waiting for other partner.", "wedding_id": str(wedding_id)}
 
-async def _handle_second_partner_submission(email: str, details_json: str):
-    find_wedding_sql = db_queries.get_wedding_by_expected_partner_email_query(email)
+async def _handle_second_partner_submission(user_id: str, wedding_id: str, second_partner_details: SecondPartnerDetails):
+    # Verify that the wedding_id exists and that the second partner's email matches other_partner_email_expected
+    find_wedding_sql = db_queries.get_wedding_details_query(wedding_id)
     wedding_query = await execute_supabase_sql(find_wedding_sql)
-    existing_wedding = wedding_query.get("data")
-    print(existing_wedding)
+    existing_wedding_data = wedding_query.get("data")
 
-    if existing_wedding:
-        wedding_id = existing_wedding[0]["wedding_id"]
-        logger.info(f"Found existing wedding for second partner {email}, wedding_id: {wedding_id}")
+    if not existing_wedding_data:
+        logger.error(f"Wedding with ID {wedding_id} not found for second partner submission.")
+        raise HTTPException(status_code=404, detail="Wedding not found.")
 
-        await _update_wedding_details(wedding_id, email, details_json)
+    existing_wedding = existing_wedding_data[0]
+    wedding_details_jsonb = existing_wedding.get("details", {})
+    logger.debug(f"_handle_second_partner_submission: Retrieved wedding_details_jsonb: {wedding_details_jsonb}")
+    other_partner_email_expected = wedding_details_jsonb.get("other_partner_email_expected")
+    logger.debug(f"_handle_second_partner_submission: Extracted other_partner_email_expected: {other_partner_email_expected}")
 
-        # We need the user_id from the users table to link to wedding_members
-        user_query = await execute_supabase_sql(db_queries.get_user_and_wedding_info_by_email_query(email))
-        user_data = user_query.get("data")
-        if not user_data:
-            logger.error(f"User with email {email} not found for second partner submission.")
-            raise HTTPException(status_code=500, detail="User not found for second partner submission.")
-        user_id = user_data[0]["user_id"]
+    if not other_partner_email_expected or other_partner_email_expected != second_partner_details.email:
+        logger.error(f"Second partner email mismatch for wedding {wedding_id}. Expected {other_partner_email_expected}, got {second_partner_details.email}.")
+        raise HTTPException(status_code=400, detail="Email does not match expected partner email for this wedding.")
 
-        # The role for the second partner is extracted from SecondPartnerDetails
-        second_partner_details_obj = SecondPartnerDetails.model_validate(json.loads(details_json))
-        role = second_partner_details_obj.role
+    logger.info(f"Found existing wedding for second partner {second_partner_details.email}, wedding_id: {wedding_id}")
 
-        await _link_user_to_wedding(user_id, wedding_id, role)
+    # Update wedding details JSONB to mark second partner onboarding complete
+    # and potentially remove other_partner_email_expected
+    await _update_wedding_details(
+        wedding_id,
+        second_partner_details.email,
+        second_partner_details=second_partner_details,
+        remove_other_partner_email_expected=True # Mark onboarding complete
+    )
 
-        return await _check_and_trigger_setup_agent(wedding_id, email)
+    await _link_user_to_wedding(user_id, wedding_id, second_partner_details.role)
 
+    # Update the second partner's users table entry to set their wedding_id.
+    # This is handled by a migration script on the database, the API just needs to ensure it doesn't send them.
+
+    return await _check_and_trigger_setup_agent(wedding_id, second_partner_details.email)
+
+async def _update_existing_partner_details(user_id: str, wedding_id: str, user_email: str, user_role: str, submission: Any):
+    logger.info(f"User {user_email} already associated with wedding_id: {wedding_id}. Updating details and wedding_members.")
+
+    if isinstance(submission, OnboardingSubmission):
+        current_user_onboarding_details = submission.current_user_onboarding_details
+        partner_onboarding_details = submission.partner_onboarding_details
+        
+        logger.debug(f"_update_existing_partner_details (OnboardingSubmission): Processing update for user {user_email}.")
+        logger.debug(f"_update_existing_partner_details (OnboardingSubmission): current_user_onboarding_details: {current_user_onboarding_details.model_dump()}")
+        logger.debug(f"_update_existing_partner_details (OnboardingSubmission): partner_onboarding_details: {partner_onboarding_details.model_dump()}")
+
+        # Update current user's partner data
+        await execute_supabase_sql(db_queries.update_wedding_details_jsonb_field_query(
+            wedding_id,
+            ["partner_data", user_email],
+            current_user_onboarding_details.model_dump()
+        ))
+        
+        # Update partner onboarding details and expected email
+        await execute_supabase_sql(db_queries.update_wedding_details_jsonb_field_query(
+            wedding_id,
+            ["partner_onboarding_details"],
+            partner_onboarding_details.model_dump()
+        ))
+        await execute_supabase_sql(db_queries.update_wedding_details_jsonb_field_query(
+            wedding_id,
+            ["other_partner_email_expected"],
+            partner_onboarding_details.email
+        ))
+    elif isinstance(submission, SecondPartnerSubmission):
+        second_partner_details = submission.current_partner_details
+        await _update_wedding_details(
+            wedding_id,
+            user_email,
+            second_partner_details=second_partner_details
+        )
     else:
-        logger.error(f"Second partner {email} submitted, but no matching wedding found where they are the expected other partner.")
-        raise HTTPException(status_code=404, detail="No matching wedding found for this partner's email. Please ensure the first partner has initiated the wedding setup or that your email is correct.")
+        raise HTTPException(status_code=400, detail="Invalid submission type for existing partner update.")
 
-async def _update_existing_partner_details(email: str, details_json: str, wedding_id: str, user_id: str, role: str):
-    logger.info(f"Current partner {email} already associated with wedding_id: {wedding_id}. Updating details and wedding_members.")
-    await _update_wedding_details(wedding_id, email, details_json)
-    await _add_user_to_wedding_members(user_id, wedding_id, role) # Ensure role is updated/inserted
-    return await _check_and_trigger_setup_agent(wedding_id, email)
+    await _add_user_to_wedding_members(user_id, wedding_id, user_role) # Ensure role is updated/inserted
+    return await _check_and_trigger_setup_agent(wedding_id, user_email)
