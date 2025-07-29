@@ -1,12 +1,11 @@
-import logging
 from fastapi import APIRouter, HTTPException
 from typing import Optional, Dict, Any
 from sanskara.helpers import execute_supabase_sql
 import sanskara.db_queries as db_queries
 from api.weddings.models import WeddingDetailsResponse, WeddingUpdate
 from datetime import date
+from logger import json_logger as logger # Import the custom JSON logger
 
-logger = logging.getLogger(__name__)
 weddings_router = APIRouter()
 
 @weddings_router.get("/{weddingId}", response_model=WeddingDetailsResponse)

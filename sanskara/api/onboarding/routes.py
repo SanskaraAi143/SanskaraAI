@@ -1,4 +1,3 @@
-import logging
 from fastapi import APIRouter, HTTPException
 from api.onboarding.models import OnboardingSubmission, SecondPartnerSubmission, CurrentUserOnboardingDetails, WeddingDetails, PartnerOnboardingDetails
 from sanskara.helpers import execute_supabase_sql
@@ -8,8 +7,8 @@ from api.onboarding.services import (
     _handle_first_partner_submission,
     _handle_second_partner_submission
 )
+from logger import json_logger as logger # Import the custom JSON logger
 
-logger = logging.getLogger(__name__)
 onboarding_router = APIRouter()
 
 @onboarding_router.post("/submit")

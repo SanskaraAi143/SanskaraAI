@@ -1,4 +1,5 @@
 import pytest
+from logger import logger
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 from sanskara.helpers import  init_supabase_mcp, execute_supabase_sql, _supabase_mcp_toolset, _supabase_tools,extract_untrusted_json
@@ -27,7 +28,7 @@ async def test_execute_supabase_sql_real_connection():
     # It will attempt to connect and execute a simple query.
     try:
         result = await execute_supabase_sql("SELECT COUNT(*) FROM users;")
-        print(f"Real connection test result: {result}")
+        logger.info(f"Real connection test result: {result}")
         assert "status" not in result or result["status"] == "success"
         assert isinstance(result, dict)  and "count" in result['data'][0] 
     except Exception as e:

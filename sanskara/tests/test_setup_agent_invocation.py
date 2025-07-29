@@ -6,14 +6,12 @@ from unittest.mock import patch, AsyncMock
 from google.adk.tools import ToolContext
 
 # Set up logging for visibility during the test run
-import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+from logger import json_logger as logger # Import the custom JSON logger
 
 # # Mock the execute_supabase_sql function
 # # This prevents actual database calls during the test
 # # and allows us to inspect what SQL queries would have been executed.
-# @patch('sanskara.sanskara.shared_libraries.helpers.execute_supabase_sql')
+# @patch('sanskara.shared_libraries.helpers.execute_supabase_sql')
 # async def mock_execute_supabase_sql(mock_sql_executor, sql: str, params: dict = None):
 #     logger.info(f"MOCK DB CALL: SQL: {sql}, Params: {params}")
 #     # Simulate a successful database operation
@@ -106,7 +104,7 @@ async def run_setup_agent_test(onboarding_data, wedding_id  ):
     final_response_text = "Agent did not produce a final response." # Default
     async for event in runner.run_async(user_id=session.user_id, session_id=session.id, new_message=user_message_content, run_config=run_config):
       # You can uncomment the line below to see *all* events during execution
-      # print(f"  [Event] Author: {event.author}, Type: {type(event).__name__}, Final: {event.is_final_response()}, Content: {event.content}")
+      # logger.info(f"  [Event] Author: {event.author}, Type: {type(event).__name__}, Final: {event.is_final_response()}, Content: {event.content}")
 
       # Key Concept: is_final_response() marks the concluding message for the turn.
       if event.is_final_response():
@@ -115,17 +113,17 @@ async def run_setup_agent_test(onboarding_data, wedding_id  ):
              final_response_text = event.content.parts[0].text
           elif event.actions and event.actions.escalate: # Handle potential errors/escalations
              final_response_text = f"Agent escalated: {event.error_message or 'No specific message.'}"
-          # Add more checks here if needed (e.g., specific error codes)
+           # Add more checks here if needed (e.g., specific error codes)
           break # Stop processing events once the final response is found
 
-    print(f"<<< Agent Response: {final_response_text}")
+    logger.info(f"<<< Agent Response: {final_response_text}")
     return final_response_text
     # # Use the mock_execute_supabase_sql context manager
-    # with patch('sanskara.sanskara.shared_libraries.helpers.execute_supabase_sql', new_callable=AsyncMock) as mock_sql_executor:
+    # with patch('sanskara.shared_libraries.helpers.execute_supabase_sql', new_callable=AsyncMock) as mock_sql_executor:
     #     mock_sql_executor.return_value = {"status": "success", "data": []} # Default success for mocks
 
     #     # # Mock the get_current_datetime tool's return value for deterministic tests
-    #     # @patch('sanskara.sanskara.sub_agents.setup_agent.tools.get_current_datetime')
+    #     # @patch('sanskara.sub_agents.setup_agent.tools.get_current_datetime')
     #     # def mock_get_current_datetime_tool(tool_context: ToolContext):
     #     #     return {"current_datetime_utc": datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat()}
 
@@ -157,8 +155,8 @@ async def run_setup_agent_test(onboarding_data, wedding_id  ):
     #             # Add more checks here if needed (e.g., specific error codes)
     #             break # Stop processing events once the final response is found
 
-    #         print(f"<<< Agent Response: {final_response_text}")
+    #         logger.info(f"<<< Agent Response: {final_response_text}")
 
  
 if __name__ == "__main__":
-    asyncio.run(run_setup_agent_test())
+    asyncio.run(run_setup_agent_test(None, None)) # Pass None for onboarding_data and wedding_id

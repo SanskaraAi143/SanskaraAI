@@ -1,5 +1,5 @@
 from typing import Dict, Any, List, Optional
-
+import json
 def get_wedding_by_expected_partner_email_query(email: str) -> str:
     return f"""
         SELECT wedding_id, details
@@ -289,6 +289,21 @@ def update_budget_item_query(
         WHERE item_id = '{item_id}';
     """
 
+def get_budget_summary_query(wedding_id: str) -> str:
+    """
+    Queries and aggregates the budget_items table to provide a summary by category,
+    including spent and a placeholder for budgeted.
+    """
+    return f"""
+        SELECT
+            category,
+            SUM(amount) AS spent,
+            0.0 AS budgeted -- Placeholder, assuming budgeted amount is not stored in budget_items table
+        FROM budget_items
+        WHERE wedding_id = '{wedding_id}'
+        GROUP BY category;
+    """
+
 def create_mood_board_query(
     wedding_id: str,
     name: str = 'Wedding Mood Board',
@@ -559,32 +574,32 @@ def get_vendor_details_query(vendor_id: str) -> str:
         WHERE vendor_id = '{vendor_id}';
     """
 
-def add_to_shortlist_query(wedding_id: str, vendor_id: str, vendor_name: str, vendor_category: str) -> str:
+def add_to_shortlist_query(wedding_id: str, linked_vendor_id: str, vendor_name: str, vendor_category: str) -> str:
     """
     Constructs a SQL query to add a vendor to a user's shortlist.
     """
     return f"""
-        INSERT INTO user_shortlisted_vendors (wedding_id, vendor_id, vendor_name, vendor_category)
-        VALUES ('{wedding_id}', '{vendor_id}', '{vendor_name}', '{vendor_category}')
+        INSERT INTO user_shortlisted_vendors (wedding_id, linked_vendor_id, vendor_name, vendor_category)
+        VALUES ('{wedding_id}', '{linked_vendor_id}', '{vendor_name}', '{vendor_category}')
         RETURNING user_vendor_id;
     """
 
-def create_booking_query(wedding_id: str, user_id: str, vendor_id: str, event_date: str, final_amount: float) -> str:
+def create_booking_query(wedding_id: str, user_id: str, vendor_id: str, event_date: str, total_amount: float, advance_amount_due: float, paid_amount: float, booking_status: str = 'pending') -> str:
     """
     Constructs a SQL query to create a booking record.
     """
     return f"""
-        INSERT INTO bookings (wedding_id, user_id, vendor_id, event_date, final_amount)
-        VALUES ('{wedding_id}', '{user_id}', '{vendor_id}', '{event_date}', {final_amount})
+        INSERT INTO bookings (wedding_id, user_id, vendor_id, event_date, total_amount, advance_amount_due, paid_amount, booking_status)
+        VALUES ('{wedding_id}', '{user_id}', '{vendor_id}', '{event_date}', {total_amount}, {advance_amount_due}, {paid_amount}, '{booking_status}')
         RETURNING booking_id;
     """
 
-def submit_review_query(booking_id: str, user_id: str, rating: float, comment: str) -> str:
+def submit_review_query(booking_id: str, user_id: str, vendor_id: str, rating: float, comment: str) -> str:
     """
     Constructs a SQL query to submit a vendor review.
     """
     return f"""
-        INSERT INTO reviews (booking_id, user_id, rating, comment)
-        VALUES ('{booking_id}', '{user_id}', {rating}, '{comment}')
+        INSERT INTO reviews (booking_id, user_id, vendor_id, rating, comment)
+        VALUES ('{booking_id}', '{user_id}', '{vendor_id}', {rating}, '{comment}')
         RETURNING review_id;
     """

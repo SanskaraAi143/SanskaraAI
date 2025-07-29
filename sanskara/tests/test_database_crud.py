@@ -1,13 +1,9 @@
 import asyncio
 import pytest
 import uuid
-import logging
 from datetime import date, datetime, timedelta
 from typing import Dict, Any, List, Optional
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+from logger import json_logger as logger # Import the custom JSON logger
 
 # --- IMPORTANT: Replace this placeholder with your actual execute_supabase_sql function ---
 # Example: from sanskara.shared_libraries.helpers import execute_supabase_sql

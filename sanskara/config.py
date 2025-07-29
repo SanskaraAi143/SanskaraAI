@@ -12,6 +12,11 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///sessions.db")
 # AgentOps Configuration
 AGENTOPS_API_KEY = os.getenv("AGENTOPS_API_KEY")
 
+# Logging Configuration
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_TO_FILE = os.getenv("LOG_TO_FILE", "false").lower() == "true"
+LOG_FILE_PATH = os.getenv("LOG_FILE_PATH", "app.log")
+
 # CORS Origins
 CORS_ORIGINS = [
     "http://localhost",

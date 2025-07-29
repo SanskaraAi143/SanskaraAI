@@ -1,76 +1,100 @@
 import json
-import logging
 from typing import Optional, Dict, Any, List
-from google.adk.agents import LlmAgent,BaseAgent,Agent
+from google.adk.agents import LlmAgent
+from google.adk.models import LlmResponse, LlmRequest
+from google.adk.sessions import Session
+from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools import agent_tool
 import os
-from google.adk.models import LlmResponse, LlmRequest
-from .sub_agents.setup_agent.agent import setup_agent
-from .sub_agents.vendor_management_agent.agent import vendor_management_agent
-from google.adk.tools import google_search,preload_memory
+from google.genai import types
 import agentops
-# Import other specialized agents as they are implemented
-# from .sub_agents.task_and_timeline_agent.agent import task_and_timeline_agent
-# from .sub_agents.guest_and_communication_agent.agent import guest_and_communication_agent
-# from .sub_agents.budget_and_expense_agent.agent import budget_and_expense_agent
-# from .sub_agents.ritual_and_cultural_agent.agent import ritual_and_cultural_agent
-# from .sub_agents.creative_agent.agent import creative_agent
-# from .sub_agents.collaboration_consensus_agent.agent import collaboration_consensus_agent
 
-from .prompt import ROOT_AGENT_PROMPT
-from .tools import (
+from sanskara.sub_agents.setup_agent.agent import setup_agent
+from sanskara.sub_agents.vendor_management_agent.agent import vendor_management_agent
+
+from sanskara.prompt import ORCHESTRATOR_AGENT_PROMPT
+from sanskara.tools import (
     get_active_workflows,
     get_tasks_for_wedding,
     update_workflow_status,
     create_workflow,
     update_task_details,
     create_task,
+    get_wedding_context, # Added for context priming
+    get_task_feedback,   # Added for context priming
+    get_task_approvals,  # Added for context priming
 )
-from .helpers import execute_supabase_sql # For fetching user and wedding info
+from sanskara.helpers import execute_supabase_sql # For fetching user and wedding info
+from logger import json_logger as logger # Import the custom JSON logger
 
-setup_agent_tool = agent_tool.AgentTool(agent=setup_agent)
+# Agent Tools
+# setup_agent_tool = agent_tool.AgentTool(agent=setup_agent)
 vendor_management_agent_tool = agent_tool.AgentTool(agent=vendor_management_agent)
-# Initialize other specialized agent tools as they are implemented
-# task_and_timeline_agent_tool = agent_tool.AgentTool(agent=task_and_timeline_agent)
-# guest_and_communication_agent_tool = agent_tool.AgentTool(agent=guest_and_communication_agent)
-# budget_and_expense_agent_tool = agent_tool.AgentTool(agent=budget_and_expense_agent)
-# ritual_and_cultural_agent_tool = agent_tool.AgentTool(agent=ritual_and_cultural_agent)
-# creative_agent_tool = agent_tool.AgentTool(agent=creative_agent)
-# collaboration_consensus_agent_tool = agent_tool.AgentTool(agent=collaboration_consensus_agent)
+
 AGENTOPS_API_KEY = os.getenv("AGENTOPS_API_KEY")
 agentops.init(
     api_key=AGENTOPS_API_KEY,
     default_tags=['google adk']
 )
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-root_agent = Agent(
-    name="RootAgent",
-    model="gemini-2.0-flash-live-001",
-    #model="gemini-2.5-flash",
-    description="Orchestrates the entire wedding planning workflow, delegates to specialized agents, and manages conversational context.",
-    instruction=ROOT_AGENT_PROMPT,
-    sub_agents=[], # RootAgent will use other agents as tools, not as sub_agents in the ADK sense
+async def orchestrator_before_model_callback(session: Session, llm_request: LlmRequest) -> None:
+    wedding_id = session.state.get("wedding_id")
+    current_user_id = session.state.get("user_id")
+    current_user_role = session.state.get("user_user_role")
+
+    with logger.contextualize(wedding_id=wedding_id, user_id=current_user_id, agent_name="OrchestratorAgent"):
+        logger.debug(f"Entering orchestrator_before_model_callback. Request: {llm_request.contents[0].parts[0].text[:100]}...")
+
+        if not wedding_id:
+            logger.warning("No wedding_id found in session state. Cannot prime OrchestratorAgent context.")
+            return
+
+        try:
+            logger.debug(f"Fetching wedding context for wedding_id: {wedding_id}")
+            wedding_data = await get_wedding_context(wedding_id)
+            logger.debug(f"Fetched wedding data. Active workflows for wedding_id: {wedding_id}")
+            active_workflows = await get_active_workflows(wedding_id)
+            logger.debug(f"Fetched active workflows. All tasks for wedding_id: {wedding_id}")
+            all_tasks = await get_tasks_for_wedding(wedding_id)
+            logger.debug(f"Fetched all tasks for wedding_id: {wedding_id}")
+
+            tasks_with_feedback_and_approvals = []
+            for task in all_tasks:
+                task_id = task.get("task_id")
+                if task_id:
+                    logger.debug(f"Fetching feedback and approvals for task_id: {task_id}")
+                    feedback = await get_task_feedback(task_id)
+                    approvals = await get_task_approvals(task_id)
+                    task["feedback"] = feedback
+                    task["approvals"] = approvals
+                    logger.debug(f"Fetched feedback and approvals for task_id: {task_id}")
+                tasks_with_feedback_and_approvals.append(task)
+            logger.info(f"Successfully gathered all task details for wedding {wedding_id}.")
+
+            # Store data in session state for the agent to access
+            session.state["wedding_data"] = wedding_data
+            session.state["active_workflows"] = active_workflows
+            session.state["all_tasks"] = tasks_with_feedback_and_approvals
+
+            logger.info(f"OrchestratorAgent context primed for wedding {wedding_id}. Context keys: {[k for k in session.state.keys() if k.startswith('current_')]}")
+
+        except Exception as e:
+            logger.error(f"Error in orchestrator_before_model_callback for wedding {wedding_id}: {e}", exc_info=True)
+            raise
+
+orchestrator_agent = LlmAgent(
+    name="OrchestratorAgent",
+    model="gemini-2.5-flash",
+    description="Orchestrates the entire user workflow for Sanskara AI, including onboarding, ritual search, budget management, and vendor search. The user only interacts with this agent.",
+    instruction=ORCHESTRATOR_AGENT_PROMPT,
     tools=[
-        # Direct tools for RootAgent (e.g., for database interactions at a high level)
-        # get_active_workflows,
-        # get_tasks_for_wedding,
-        # update_workflow_status,
-        # create_workflow,
-        # update_task_details,
-        # create_task,
-        google_search
-
-        # Specialized Agents wrapped as AgentTools
-        #setup_agent_tool,
-        #vendor_management_agent_tool,
-        # task_and_timeline_agent_tool,
-        # guest_and_communication_agent_tool,
-        # budget_and_expense_agent_tool,
-        # ritual_and_cultural_agent_tool,
-        # creative_agent_tool,
-        # collaboration_consensus_agent_tool,
+        get_active_workflows,
+        update_workflow_status,
+        create_workflow,
+        update_task_details,
+        create_task,
+        vendor_management_agent_tool,
     ],
-    #output_key="root_response" # Key for the output of this agent
+    before_model_callback=orchestrator_before_model_callback,
 )
+root_agent = orchestrator_agent

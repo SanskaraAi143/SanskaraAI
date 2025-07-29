@@ -1,12 +1,10 @@
 import asyncio
 import json
-import logging
 import websockets
 import traceback
 from websockets.exceptions import ConnectionClosed
 from websockets.server import ServerConnection
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger()
+from logger import json_logger as logger # Import the custom JSON logger
 
 # Constants
 PROJECT_ID = "sanskaraAI"
@@ -29,7 +27,7 @@ class BaseWebSocketServer:
             await asyncio.Future()
 
     async def handle_client(self, websocket: ServerConnection, path):
-        print(f"New client connected: {websocket} , 'path': {path}")
+        logger.info(f"New client connected: {websocket} , 'path': {path}")
         client_id = id(websocket)
         logger.info(f"New client connected: {client_id}")
         await websocket.send(json.dumps({"type": "ready"}))

@@ -12,3 +12,4 @@ redis
 celery
 pytest-asyncio
 agentops
+twilio

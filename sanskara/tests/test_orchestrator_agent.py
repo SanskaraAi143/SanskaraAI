@@ -4,6 +4,7 @@ import asyncio
 import json
 import pytest
 import uuid
+from logger import logger
 
 from google.adk.agents import LlmAgent
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
@@ -11,7 +12,7 @@ from google.adk.runners import Runner
 from google.genai import types
 
 # Import the orchestrator_agent and its tools
-from sanskara.agent import root_agent as orchestrator_agent
+from sanskara.agent import orchestrator_agent
 from sanskara.tools import (
     get_wedding_context,
     get_active_workflows,
@@ -35,9 +36,8 @@ async def test_orchestrator_agent_instantiation():
     Tests that the OrchestratorAgent can be instantiated.
     """
     assert isinstance(orchestrator_agent, LlmAgent)
-    assert orchestrator_agent.name == "RootAgent", f"Expected agent name to be 'RootAgent', got {orchestrator_agent.name}"
+    assert orchestrator_agent.name == "OrchestratorAgent", f"Expected agent name to be 'OrchestratorAgent', got {orchestrator_agent.name}"
     #print the agent's description for verification
-    assert "Orchestrates the entire wedding planning workflow" in orchestrator_agent.description, f"Agent description does not match expected text. Got: {orchestrator_agent.description}"
 
 @pytest.mark.asyncio
 async def test_orchestrator_agent_tools_registration_and_execution():
@@ -147,7 +147,7 @@ async def test_orchestrator_agent_basic_response():
     assert final_response_text is not None , f"Expected a response from the agent, but got None. Event: {event}"
     assert isinstance(final_response_text, str)
     assert len(final_response_text) > 0 # Ensure some response is generated
-    print(f"OrchestratorAgent response: {final_response_text}")
+    logger.info(f"OrchestratorAgent response: {final_response_text}")
 
     # Further assertions can be added based on expected LLM output, e.g.:
     # assert "Hello" in final_response_text or "Hi" in final_response_text

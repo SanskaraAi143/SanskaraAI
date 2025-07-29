@@ -1,13 +1,11 @@
 import json
-import logging
 from typing import Optional, Dict, Any, List
-from google.genai import types 
+from google.genai import types
 from google.adk.models import LlmResponse, LlmRequest
 from google.adk.agents.callback_context import CallbackContext
 
-from .helpers import execute_supabase_sql
-
-logger = logging.getLogger(__name__)
+from sanskara.helpers import execute_supabase_sql
+from logger import json_logger as logger # Import the custom JSON logger
 
 async def get_wedding_context(wedding_id: str) -> dict:
     """
@@ -244,31 +242,46 @@ async def create_task(
         return {"status": "error", "message": str(e)}
     
 
-# before_agent_callback function to handle context add for wedding details
-# def orchestrator_agent_before_agent_callback(callback_context :CallbackContext , llm_request : LlmRequest) -> Optional[LlmResponse]:
-#     """
-#     Callback to add wedding context to the LLM request before invoking the agent.
-#     This ensures the agent has access to the wedding details for processing.
-#
-#     Args:
-#         callback_context: The context for the callback, containing session and user information.
-#         llm_request: The original LLM request being processed.
-#
-#     Returns:
-#         An updated LlmResponse with the wedding context added, or None if no context is available.
-#     """
-#     wedding_id = callback_context.get("wedding_id")
-#     if not wedding_id:
-#         logger.warning("No wedding_id found in callback context.")
-#         return None
-#
-#     # Fetch wedding context
-#     wedding_context = get_wedding_context(wedding_id)
-#
-#     if not wedding_context:
-#         logger.warning(f"No context found for wedding_id {wedding_id}.")
-#         return None
-#
-#     # Add wedding context to the LLM request
-#     llm_request.context["wedding_context"] = wedding_context
-#     return llm_request
+async def get_task_feedback(task_id: str) -> List[Dict[str, Any]]:
+    """
+    Retrieves all feedback entries for a specific task.
+
+    Args:
+        task_id: The UUID of the task.
+
+    Returns:
+        A list of dictionaries, each representing a feedback entry.
+    """
+    sql = "SELECT * FROM task_feedback WHERE task_id = :task_id ORDER BY created_at DESC;"
+    params = {"task_id": task_id}
+    try:
+        result = await execute_supabase_sql(sql, params)
+        if result and result.get("status") == "success" and result.get("data"):
+            return result["data"]
+        else:
+            return []
+    except Exception as e:
+        logger.error(f"Error fetching task feedback for {task_id}: {e}")
+        return {"error": str(e)}
+
+async def get_task_approvals(task_id: str) -> List[Dict[str, Any]]:
+    """
+    Retrieves all approval entries for a specific task.
+
+    Args:
+        task_id: The UUID of the task.
+
+    Returns:
+        A list of dictionaries, each representing an approval entry.
+    """
+    sql = "SELECT * FROM task_approvals WHERE task_id = :task_id ORDER BY created_at DESC;"
+    params = {"task_id": task_id}
+    try:
+        result = await execute_supabase_sql(sql, params)
+        if result and result.get("status") == "success" and result.get("data"):
+            return result["data"]
+        else:
+            return []
+    except Exception as e:
+        logger.error(f"Error fetching task approvals for {task_id}: {e}")
+        return {"error": str(e)}

@@ -1,26 +1,34 @@
-
 ---------------------------------------------------------------------
 -- 1. NEW CORE TABLES FOR COLLABORATION & STATE MANAGEMENT
 ---------------------------------------------------------------------
 
 -- The Wedding Table (The new central object for the entire application)
-CREATE TABLE weddings (
+CREATE TABLE IF NOT EXISTS weddings (
     wedding_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     wedding_name VARCHAR(255) NOT NULL, -- e.g., "Priya & Rohan's Wedding"
     wedding_date DATE,
+    wedding_location TEXT,
+    wedding_tradition TEXT,
+    wedding_style VARCHAR(100),
     status VARCHAR(50) NOT NULL DEFAULT 'onboarding_in_progress', -- 'onboarding_in_progress', 'active', 'completed', 'archived'
+    details JSONB, -- Stores aggregated onboarding data, other partner email expected, etc.
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TRIGGER set_weddings_updated_at
-BEFORE UPDATE ON weddings
-FOR EACH ROW
-EXECUTE FUNCTION trigger_set_timestamp();
+-- Add trigger for updated_at if it doesn't exist
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_weddings_updated_at') THEN
+        CREATE TRIGGER set_weddings_updated_at
+        BEFORE UPDATE ON weddings
+        FOR EACH ROW
+        EXECUTE FUNCTION trigger_set_timestamp();
+    END IF;
+END $$;
 
 
 -- Wedding Members Table (Links multiple users to a single wedding)
-CREATE TABLE wedding_members (
+CREATE TABLE IF NOT EXISTS wedding_members (
     wedding_id UUID NOT NULL REFERENCES weddings(wedding_id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     role VARCHAR(50) NOT NULL, -- e.g., 'bride', 'groom', 'planner', 'bride_family', 'groom_family'
@@ -29,7 +37,7 @@ CREATE TABLE wedding_members (
 
 
 -- Workflows Table (Long-term memory for high-level agent processes)
-CREATE TABLE workflows (
+CREATE TABLE IF NOT EXISTS workflows (
     workflow_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     wedding_id UUID NOT NULL REFERENCES weddings(wedding_id) ON DELETE CASCADE,
     workflow_name VARCHAR(100) NOT NULL, -- e.g., 'CoreVendorBookingWorkflow', 'GuestInvitationWorkflow'
@@ -39,16 +47,20 @@ CREATE TABLE workflows (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_workflows_wedding_id_status ON workflows (wedding_id, status);
+CREATE INDEX IF NOT EXISTS idx_workflows_wedding_id_status ON workflows (wedding_id, status);
 
-CREATE TRIGGER set_workflows_updated_at
-BEFORE UPDATE ON workflows
-FOR EACH ROW
-EXECUTE FUNCTION trigger_set_timestamp();
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_workflows_updated_at') THEN
+        CREATE TRIGGER set_workflows_updated_at
+        BEFORE UPDATE ON workflows
+        FOR EACH ROW
+        EXECUTE FUNCTION trigger_set_timestamp();
+    END IF;
+END $$;
 
 
 -- Task Feedback Table (Supports the "Lead and Review" model for comments)
-CREATE TABLE task_feedback (
+CREATE TABLE IF NOT EXISTS task_feedback (
     feedback_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     task_id UUID NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -57,11 +69,11 @@ CREATE TABLE task_feedback (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_task_feedback_task_id ON task_feedback(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_feedback_task_id ON task_feedback(task_id);
 
 
 -- Task Approvals Table (Supports the "Lead and Review" model for final sign-offs)
-CREATE TABLE task_approvals (
+CREATE TABLE IF NOT EXISTS task_approvals (
     approval_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     task_id UUID NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
     approving_party VARCHAR(50) NOT NULL, -- 'bride_side', 'groom_side', 'couple'
@@ -71,10 +83,14 @@ CREATE TABLE task_approvals (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TRIGGER set_task_approvals_updated_at
-BEFORE UPDATE ON task_approvals
-FOR EACH ROW
-EXECUTE FUNCTION trigger_set_timestamp();
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_task_approvals_updated_at') THEN
+        CREATE TRIGGER set_task_approvals_updated_at
+        BEFORE UPDATE ON task_approvals
+        FOR EACH ROW
+        EXECUTE FUNCTION trigger_set_timestamp();
+    END IF;
+END $$;
 
 
 ---------------------------------------------------------------------
@@ -82,67 +98,163 @@ EXECUTE FUNCTION trigger_set_timestamp();
 ---------------------------------------------------------------------
 
 -- ALTER 'users' table to link to the wedding
+ALTER TABLE users
+    DROP COLUMN IF EXISTS wedding_date,
+    DROP COLUMN IF EXISTS wedding_location,
+    DROP COLUMN IF EXISTS wedding_tradition,
+    ADD COLUMN IF NOT EXISTS wedding_id UUID REFERENCES weddings(wedding_id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_users_wedding_id ON users (wedding_id);
+
 
 -- ALTER 'tasks' table for collaboration
 ALTER TABLE tasks
-    DROP COLUMN user_id, -- A task belongs to the wedding, not a single user
-    ADD COLUMN wedding_id UUID,
-    ADD COLUMN lead_party VARCHAR(50); -- 'bride_side', 'groom_side', 'couple'
+    DROP COLUMN IF EXISTS user_id, -- A task belongs to the wedding, not a single user
+    ADD COLUMN IF NOT EXISTS wedding_id UUID,
+    ADD COLUMN IF NOT EXISTS lead_party VARCHAR(50); -- 'bride_side', 'groom_side', 'couple'
+
+-- Add foreign key constraint for tasks.wedding_id
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tasks_wedding_id_fkey') THEN
+        ALTER TABLE tasks
+        ADD CONSTRAINT tasks_wedding_id_fkey FOREIGN KEY (wedding_id) REFERENCES weddings(wedding_id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_task_wedding_id_status ON tasks (wedding_id, is_complete);
+
 
 -- ALTER 'budget_items' table for collaboration
 ALTER TABLE budget_items
-    DROP COLUMN user_id,
-    ADD COLUMN wedding_id UUID,
-    ADD COLUMN contribution_by VARCHAR(50); -- 'bride_side', 'groom_side', 'shared'
+    DROP COLUMN IF EXISTS user_id,
+    ADD COLUMN IF NOT EXISTS wedding_id UUID,
+    ADD COLUMN IF NOT EXISTS contribution_by VARCHAR(50); -- 'bride_side', 'groom_side', 'shared'
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'budget_items_wedding_id_fkey') THEN
+        ALTER TABLE budget_items
+        ADD CONSTRAINT budget_items_wedding_id_fkey FOREIGN KEY (wedding_id) REFERENCES weddings(wedding_id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_budget_item_wedding_id ON budget_items (wedding_id);
 
 
 -- ALTER 'guest_list' table for collaboration
 ALTER TABLE guest_list
-    DROP COLUMN user_id,
-    ADD COLUMN wedding_id UUID;
+    DROP COLUMN IF EXISTS user_id,
+    ADD COLUMN IF NOT EXISTS wedding_id UUID;
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'guest_list_wedding_id_fkey') THEN
+        ALTER TABLE guest_list
+        ADD CONSTRAINT guest_list_wedding_id_fkey FOREIGN KEY (wedding_id) REFERENCES weddings(wedding_id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_guest_list_wedding_id ON guest_list (wedding_id);
+
 
 -- ALTER 'mood_boards' table for collaboration
 ALTER TABLE mood_boards
-    DROP COLUMN user_id,
-    ADD COLUMN wedding_id UUID;
+    DROP COLUMN IF EXISTS user_id,
+    ADD COLUMN IF NOT EXISTS wedding_id UUID;
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'mood_boards_wedding_id_fkey') THEN
+        ALTER TABLE mood_boards
+        ADD CONSTRAINT mood_boards_wedding_id_fkey FOREIGN KEY (wedding_id) REFERENCES weddings(wedding_id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+ALTER TABLE mood_boards
+    ADD COLUMN IF NOT EXISTS visibility VARCHAR(50) NOT NULL DEFAULT 'shared',
+    ADD COLUMN IF NOT EXISTS owner_party VARCHAR(50); -- 'bride_side', 'groom_side', 'couple'
+
+CREATE INDEX IF NOT EXISTS idx_mood_board_wedding_id ON mood_boards (wedding_id);
 
 
 -- ALTER 'timeline_events' table for collaboration
 ALTER TABLE timeline_events
-    DROP COLUMN user_id,
-    ADD COLUMN wedding_id UUID;
+    DROP COLUMN IF EXISTS user_id,
+    ADD COLUMN IF NOT EXISTS wedding_id UUID;
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'timeline_events_wedding_id_fkey') THEN
+        ALTER TABLE timeline_events
+        ADD CONSTRAINT timeline_events_wedding_id_fkey FOREIGN KEY (wedding_id) REFERENCES weddings(wedding_id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+ALTER TABLE timeline_events
+    ADD COLUMN IF NOT EXISTS visibility VARCHAR(50) NOT NULL DEFAULT 'shared', -- 'shared' or 'private'
+    ADD COLUMN IF NOT EXISTS relevant_party VARCHAR(50); -- 'bride_side', 'groom_side', 'couple'
+
+CREATE INDEX IF NOT EXISTS idx_timeline_events_wedding_id_datetime ON timeline_events (wedding_id, event_date_time);
 
 
 -- ALTER 'chat_sessions' table for collaboration
 ALTER TABLE chat_sessions
-    DROP COLUMN user_id,
-    ADD COLUMN wedding_id UUID;
+    DROP COLUMN IF EXISTS user_id,
+    ADD COLUMN IF NOT EXISTS wedding_id UUID;
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chat_sessions_wedding_id_fkey') THEN
+        ALTER TABLE chat_sessions
+        ADD CONSTRAINT chat_sessions_wedding_id_fkey FOREIGN KEY (wedding_id) REFERENCES weddings(wedding_id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+ALTER TABLE chat_sessions
+    ALTER COLUMN summary TYPE JSONB USING summary::jsonb,
+    ADD COLUMN IF NOT EXISTS wedding_id UUID; -- This is a duplicate, will be removed by the previous alter
+
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_wedding_id ON chat_sessions (wedding_id);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_summary_gin ON chat_sessions USING GIN (summary);
+
 
 -- ALTER 'user_shortlisted_vendors' to link to the wedding
 ALTER TABLE user_shortlisted_vendors
-    DROP COLUMN user_id,
-    ADD COLUMN wedding_id UUID;
+    DROP COLUMN IF EXISTS user_id,
+    ADD COLUMN IF NOT EXISTS wedding_id UUID;
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_shortlisted_vendors_wedding_id_fkey') THEN
+        ALTER TABLE user_shortlisted_vendors
+        ADD CONSTRAINT user_shortlisted_vendors_wedding_id_fkey FOREIGN KEY (wedding_id) REFERENCES weddings(wedding_id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_user_shortlisted_vendors_wedding_id ON user_shortlisted_vendors (wedding_id);
 
 
--- ALTER 'weddings' to have details column for additional metadata
-ALTER TABLE weddings
-    ADD COLUMN details JSONB;
+-- ALTER 'bookings' table to link to the wedding
+ALTER TABLE bookings
+    ADD COLUMN IF NOT EXISTS wedding_id UUID;
 
--- ALTER 'timeline_events' table to add a visibility scope
-ALTER TABLE timeline_events
-    ADD COLUMN visibility VARCHAR(50) NOT NULL DEFAULT 'shared', -- 'shared' or 'private'
-    ADD COLUMN relevant_party VARCHAR(50); -- 'bride_side', 'groom_side', 'couple'
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bookings_wedding_id_fkey') THEN
+        ALTER TABLE bookings
+        ADD CONSTRAINT bookings_wedding_id_fkey FOREIGN KEY (wedding_id) REFERENCES weddings(wedding_id) ON DELETE CASCADE;
+    END IF;
+END $$;
 
--- ALTER 'mood_boards' table for visibility control
-ALTER TABLE mood_boards
-    ADD COLUMN visibility VARCHAR(50) NOT NULL DEFAULT 'shared',
-    ADD COLUMN owner_party VARCHAR(50); -- 'bride_side', 'groom_side', 'couple'
+CREATE INDEX IF NOT EXISTS idx_bookings_wedding_id ON bookings (wedding_id);
 
 
--- ALTER 'chat_sessions' table to upgrade the summary field for structured context
-ALTER TABLE chat_sessions
-    ALTER COLUMN summary TYPE JSONB
-    USING summary::jsonb;
+-- Function to handle new auth user, now also setting wedding_id if available (though primarily handled by onboarding)
+CREATE OR REPLACE FUNCTION public.handle_new_auth_user()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO public.users (supabase_auth_uid, email, display_name)
+    VALUES (new.id, new.email, new.raw_user_meta_data->>'display_name')
+    ON CONFLICT (supabase_auth_uid) DO NOTHING;
+    RETURN new;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Optional: Add an index for faster querying of the summary data if needed
-CREATE INDEX idx_chat_sessions_summary_gin ON chat_sessions USING GIN (summary);
+-- Re-create the trigger for new auth users
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+AFTER INSERT ON auth.users
+FOR EACH ROW EXECUTE PROCEDURE public.handle_new_auth_user();

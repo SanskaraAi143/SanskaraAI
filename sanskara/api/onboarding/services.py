@@ -1,15 +1,19 @@
 import json
-import logging
 from typing import Dict, Any, List, Optional
 from datetime import date
 from fastapi import HTTPException
 
+from google.adk.models import LlmRequest
+from google.adk.sessions import Session
+from sanskara.sub_agents.setup_agent.agent import setup_agent
+from google.adk.sessions.in_memory_session_service import InMemorySessionService
+from google.adk.runners import Runner
+from google.genai import types
+
 from sanskara.helpers import execute_supabase_sql
 import sanskara.db_queries as db_queries
 from api.onboarding.models import CurrentUserOnboardingDetails, SecondPartnerDetails, WeddingDetails, PartnerOnboardingDetails,OnboardingSubmission, SecondPartnerSubmission
-from tests.test_setup_agent_invocation import run_setup_agent_test # TODO: Remove test import
-
-logger = logging.getLogger(__name__)
+from logger import json_logger as logger # Import the custom JSON logger
 
 async def _update_wedding_details(wedding_id: str,
                                   current_user_email: str,
@@ -77,17 +81,54 @@ async def _check_and_trigger_setup_agent(wedding_id: str, current_partner_email:
         logger.info(f"Both partners have submitted for wedding_id: {wedding_id}. Triggering SetupAgent.")
         update_status_sql = db_queries.update_wedding_status_query(wedding_id, 'onboarding_complete')
         await execute_supabase_sql(update_status_sql)
-        # TODO: Trigger SetupAgent here
-        if run_setup_agent_test(updated_details, wedding_id):  # Placeholder for actual agent invocation
-            logger.info(f"SetupAgent successfully triggered for wedding_id: {wedding_id}")
-            # update the wedding status to 'active'
+        logger.info(f"Both partners have submitted. Invoking SetupAgent for wedding_id: {wedding_id}.")
+        
+        session_service = InMemorySessionService()
+        session = await session_service.create_session(
+            app_name="sanskara_wedding_planner",
+            user_id="setup-agent-trigger", # A dummy user ID for this trigger
+            session_id=wedding_id,
+        )
+        # Populate session state with relevant data for SetupAgent
+        session.state["wedding_id"] = wedding_id
+        session.state["partner_data"] = updated_details["partner_data"]
+        session.state["wedding_details"] = updated_details
+
+        runner = Runner(
+            app_name="sanskara_wedding_planner",
+            agent=setup_agent,
+            session_service=session_service,
+        )
+
+        user_message_content = types.Content(
+            role="user",
+            parts=[types.Part(text=f"Initialize wedding planning for wedding ID {wedding_id} with details: {json.dumps(updated_details)}. Both partners have completed onboarding.")]
+        )
+
+        final_response_text = "SetupAgent did not produce a final response."
+        try:
+            async for event in runner.run_async(user_id=session.user_id, session_id=session.id, new_message=user_message_content):
+                if event.is_final_response():
+                    if event.content and event.content.parts:
+                        final_response_text = event.content.parts[0].text
+                    elif event.actions and event.actions.escalate:
+                        final_response_text = f"SetupAgent escalated: {event.error_message or 'No specific message.'}"
+                    break
+            
+            logger.info(f"SetupAgent response for wedding_id {wedding_id}: {final_response_text}")
+
+            # Assuming setup_agent completes successfully, update wedding status to 'active'
             update_status_sql = db_queries.update_wedding_status_query(wedding_id, 'active')
-            agent_setup_respone = await execute_supabase_sql(update_status_sql)
-            if agent_setup_respone.get("status") == "error":
-                logger.error(f"Failed to update wedding status to 'active': {agent_setup_respone.get('error')}")
+            agent_setup_response_db = await execute_supabase_sql(update_status_sql)
+            if agent_setup_response_db.get("status") == "error":
+                logger.error(f"Failed to update wedding status to 'active': {agent_setup_response_db.get('error')}")
                 raise HTTPException(status_code=500, detail="Failed to update wedding status to 'active'.")
             logger.info(f"Wedding status updated to 'active' for wedding_id: {wedding_id}")
-        return {"message": "Both partners submitted. SetupAgent triggered (placeholder).", "wedding_id": str(wedding_id)}
+            
+            return {"message": "Both partners submitted. SetupAgent triggered and wedding status active.", "wedding_id": str(wedding_id)}
+        except Exception as e:
+            logger.error(f"Error invoking SetupAgent for wedding_id {wedding_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Error during SetupAgent invocation: {e}")
     else:
         return {"message": "Onboarding data updated. Waiting for other partner.", "wedding_id": str(wedding_id)}
 

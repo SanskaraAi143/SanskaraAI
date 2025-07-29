@@ -4,11 +4,9 @@ import asyncio
 import dotenv
 import ast
 import re
-import logging
 from typing import Optional, Any, Tuple, Dict
 from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset, StdioServerParameters,StdioConnectionParams
-
-logger = logging.getLogger(__name__)
+from logger import json_logger as logger # Import the custom JSON logger
 
 dotenv_paths = [
     os.path.join(os.path.dirname(__file__), '..', '.env'),
@@ -167,7 +165,7 @@ async def execute_supabase_sql(sql: str, params: Optional[Dict[str, Any]] = None
         return {"status": "error", "error": "An unexpected error occurred during SQL execution."}
 
 def extract_untrusted_json(text_data: str) -> Optional[Any]:
-    print(f"extract_untrusted_json: Extracting JSON from text: {text_data}...")
+    logger.debug(f"extract_untrusted_json: Extracting JSON from text: {text_data}...")
 
     # --- NEW STEP: Un-escape the input string if it's enclosed in quotes ---
     if text_data.startswith('"') and text_data.endswith('"'):
