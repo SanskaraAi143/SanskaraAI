@@ -584,13 +584,14 @@ def add_to_shortlist_query(wedding_id: str, linked_vendor_id: str, vendor_name: 
         RETURNING user_vendor_id;
     """
 
-def create_booking_query(wedding_id: str, user_id: str, vendor_id: str, event_date: str, total_amount: float, advance_amount_due: float, paid_amount: float, booking_status: str = 'pending') -> str:
+def create_booking_query(user_id: str, vendor_id: str, event_date: str, total_amount: float, advance_amount_due: float, paid_amount: float, booking_status: str = 'pending') -> str:
     """
     Constructs a SQL query to create a booking record.
     """
+    # TODO plan on integrating with wedding_id instead of user_id
     return f"""
-        INSERT INTO bookings (wedding_id, user_id, vendor_id, event_date, total_amount, advance_amount_due, paid_amount, booking_status)
-        VALUES ('{wedding_id}', '{user_id}', '{vendor_id}', '{event_date}', {total_amount}, {advance_amount_due}, {paid_amount}, '{booking_status}')
+        INSERT INTO bookings (user_id, vendor_id, event_date, total_amount, advance_amount_due, paid_amount, booking_status)
+        VALUES ('{user_id}', '{vendor_id}', '{event_date}', {total_amount}, {advance_amount_due}, {paid_amount}, '{booking_status}')
         RETURNING booking_id;
     """
 

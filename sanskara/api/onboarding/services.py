@@ -6,9 +6,10 @@ from fastapi import HTTPException
 from google.adk.models import LlmRequest
 from google.adk.sessions import Session
 from sanskara.sub_agents.setup_agent.agent import setup_agent
-from google.adk.sessions.in_memory_session_service import InMemorySessionService
+from google.adk.sessions import DatabaseSessionService # Import DatabaseSessionService
 from google.adk.runners import Runner
 from google.genai import types
+from config import SESSION_SERVICE_URI # Import SESSION_SERVICE_URI
 
 from sanskara.helpers import execute_supabase_sql
 import sanskara.db_queries as db_queries
@@ -23,8 +24,9 @@ async def _update_wedding_details(wedding_id: str,
     # Fetch existing wedding details to merge
     existing_wedding_query = await execute_supabase_sql(db_queries.get_wedding_details_query(wedding_id))
     if existing_wedding_query.get("status") == "error" or not existing_wedding_query.get("data"):
-        logger.error(f"Failed to fetch existing wedding details for update: {existing_wedding_query.get('error')}")
-        raise HTTPException(status_code=500, detail="Failed to fetch existing wedding details.")
+        error_message = existing_wedding_query.get('error', 'Unknown error')
+        logger.error(f"Failed to fetch existing wedding details for update (wedding_id: {wedding_id}): {error_message}")
+        raise HTTPException(status_code=500, detail="Could not retrieve wedding details. Please try again.")
 
     existing_details = existing_wedding_query["data"][0].get("details", {})
     logger.debug(f"_update_wedding_details: Initial existing_details: {existing_details}")
@@ -52,16 +54,18 @@ async def _update_wedding_details(wedding_id: str,
     )
     update_result = await execute_supabase_sql(update_wedding_sql)
     if update_result.get("status") == "error":
-        logger.error(f"Failed to update wedding details: {update_result.get('error')}")
-        raise HTTPException(status_code=500, detail="Failed to update wedding details.")
+        error_message = update_result.get('error', 'Unknown error')
+        logger.error(f"Failed to update wedding details (wedding_id: {wedding_id}): {error_message}")
+        raise HTTPException(status_code=500, detail="Failed to update wedding details during onboarding. Please try again.")
     return update_result
 
 async def _add_user_to_wedding_members(user_id: str, wedding_id: str, role: str):
     add_member_sql = db_queries.add_wedding_member_query(user_id, wedding_id, role)
     add_member_result = await execute_supabase_sql(add_member_sql)
     if add_member_result.get("status") == "error":
-        logger.error(f"Failed to add user {user_id} to wedding {wedding_id} with role {role}: {add_member_result.get('error')}")
-        raise HTTPException(status_code=500, detail="Failed to add user to wedding members.")
+        error_message = add_member_result.get('error', 'Unknown error')
+        logger.error(f"Failed to add user {user_id} to wedding {wedding_id} with role {role}: {error_message}")
+        raise HTTPException(status_code=500, detail="Failed to link user to wedding. Please try again.")
     return add_member_result
 
 async def _link_user_to_wedding(user_id: str, wedding_id: str, role: str):
@@ -83,7 +87,8 @@ async def _check_and_trigger_setup_agent(wedding_id: str, current_partner_email:
         await execute_supabase_sql(update_status_sql)
         logger.info(f"Both partners have submitted. Invoking SetupAgent for wedding_id: {wedding_id}.")
         
-        session_service = InMemorySessionService()
+        # Use DatabaseSessionService for SetupAgent
+        session_service = DatabaseSessionService(SESSION_SERVICE_URI)
         session = await session_service.create_session(
             app_name="sanskara_wedding_planner",
             user_id="setup-agent-trigger", # A dummy user ID for this trigger
@@ -121,8 +126,9 @@ async def _check_and_trigger_setup_agent(wedding_id: str, current_partner_email:
             update_status_sql = db_queries.update_wedding_status_query(wedding_id, 'active')
             agent_setup_response_db = await execute_supabase_sql(update_status_sql)
             if agent_setup_response_db.get("status") == "error":
-                logger.error(f"Failed to update wedding status to 'active': {agent_setup_response_db.get('error')}")
-                raise HTTPException(status_code=500, detail="Failed to update wedding status to 'active'.")
+                error_message = agent_setup_response_db.get('error', 'Unknown error')
+                logger.error(f"Failed to update wedding status to 'active' for wedding_id {wedding_id}: {error_message}")
+                raise HTTPException(status_code=500, detail="Setup completed, but failed to activate wedding. Please contact support.")
             logger.info(f"Wedding status updated to 'active' for wedding_id: {wedding_id}")
             
             return {"message": "Both partners submitted. SetupAgent triggered and wedding status active.", "wedding_id": str(wedding_id)}
@@ -157,8 +163,9 @@ async def _handle_first_partner_submission(user_id: str,
     logger.debug(f"_handle_first_partner_submission: create_wedding_sql: {create_wedding_sql}")
     create_result = await execute_supabase_sql(create_wedding_sql)
     if create_result.get("status") == "error" or not create_result.get("data"):
-        logger.error(f"Failed to create new wedding: {create_result.get('error')}")
-        raise HTTPException(status_code=500, detail="Failed to create new wedding.")
+        error_message = create_result.get('error', 'Unknown error')
+        logger.error(f"Failed to create new wedding: {error_message}")
+        raise HTTPException(status_code=500, detail="Failed to create your wedding plan. Please try again.")
 
     wedding_id = create_result["data"][0]["wedding_id"]
     logger.info(f"New wedding created with ID: {wedding_id} for {current_user_onboarding_details.email}. Other partner expected: {partner_onboarding_details.email}")
@@ -178,8 +185,8 @@ async def _handle_second_partner_submission(user_id: str, wedding_id: str, secon
     existing_wedding_data = wedding_query.get("data")
 
     if not existing_wedding_data:
-        logger.error(f"Wedding with ID {wedding_id} not found for second partner submission.")
-        raise HTTPException(status_code=404, detail="Wedding not found.")
+        logger.error(f"Second partner submission failed: Wedding with ID {wedding_id} not found.")
+        raise HTTPException(status_code=404, detail="The wedding you are trying to join was not found. Please check the wedding ID.")
 
     existing_wedding = existing_wedding_data[0]
     wedding_details_jsonb = existing_wedding.get("details", {})
@@ -188,8 +195,8 @@ async def _handle_second_partner_submission(user_id: str, wedding_id: str, secon
     logger.debug(f"_handle_second_partner_submission: Extracted other_partner_email_expected: {other_partner_email_expected}")
 
     if not other_partner_email_expected or other_partner_email_expected != second_partner_details.email:
-        logger.error(f"Second partner email mismatch for wedding {wedding_id}. Expected {other_partner_email_expected}, got {second_partner_details.email}.")
-        raise HTTPException(status_code=400, detail="Email does not match expected partner email for this wedding.")
+        logger.warning(f"Second partner submission failed: Email mismatch for wedding {wedding_id}. Expected {other_partner_email_expected}, got {second_partner_details.email}.")
+        raise HTTPException(status_code=400, detail="The email you provided does not match the expected partner email for this wedding. Please verify your email or contact the first partner.")
 
     logger.info(f"Found existing wedding for second partner {second_partner_details.email}, wedding_id: {wedding_id}")
 

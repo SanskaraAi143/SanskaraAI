@@ -1,7 +1,7 @@
 import uvicorn
 from dotenv import load_dotenv
 import os
-
+import agentops
 from logger import json_logger as logger # Import the custom JSON logger
 from api.app import app
 from api.onboarding.routes import onboarding_router
@@ -9,7 +9,11 @@ from api.weddings.routes import weddings_router
 from agent_websocket.service import websocket_endpoint
 
 load_dotenv()
-
+AGENTOPS_API_KEY = os.getenv("AGENTOPS_API_KEY")
+agentops.init(
+    api_key=AGENTOPS_API_KEY,
+    default_tags=['google adk']
+)
 logger.info("Application starting up...") # Log application startup
 
 # Include routers

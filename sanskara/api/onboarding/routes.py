@@ -28,7 +28,8 @@ async def submit_onboarding_data(submission: OnboardingSubmission | SecondPartne
         wedding_id = submission.wedding_id
 
     if not user_email:
-        raise HTTPException(status_code=400, detail="User email not provided in submission.")
+        logger.warning("Onboarding submission failed: User email not provided.")
+        raise HTTPException(status_code=400, detail="User email is required for onboarding.")
 
     user_query_result = await execute_supabase_sql(db_queries.get_user_and_wedding_info_by_email_query(user_email))
     existing_user_data = user_query_result.get("data")
@@ -43,11 +44,12 @@ async def submit_onboarding_data(submission: OnboardingSubmission | SecondPartne
         existing_role = existing_user_data[0].get("role")
 
     if not user_id:
-        logger.error(f"User with email {user_email} not found in the users table.")
-        raise HTTPException(status_code=404, detail=f"User with email {user_email} not found. Please ensure you have signed up.")
+        logger.error(f"Onboarding failed: User with email {user_email} not found in the users table. User must sign up first.")
+        raise HTTPException(status_code=404, detail="User not found. Please ensure you have signed up before onboarding.")
 
     if existing_wedding_id and wedding_id and existing_wedding_id != wedding_id:
-        raise HTTPException(status_code=400, detail="User is already associated with a different wedding.")
+        logger.warning(f"Onboarding conflict: User {user_email} is already associated with wedding {existing_wedding_id}, but attempted to link to {wedding_id}.")
+        raise HTTPException(status_code=400, detail="You are already associated with a different wedding. Please contact support if you believe this is an error.")
     elif existing_wedding_id:
         # User exists and is already linked to a wedding via wedding_members
         # This branch handles re-submission by an already onboarded user
@@ -55,13 +57,15 @@ async def submit_onboarding_data(submission: OnboardingSubmission | SecondPartne
     elif isinstance(submission, OnboardingSubmission):
         # First partner submission (new wedding creation)
         if submission.current_user_onboarding_details.email == submission.partner_onboarding_details.email:
-            raise HTTPException(status_code=400, detail="Current user and partner cannot have the same email address.")
+            logger.warning(f"Onboarding submission failed: Current user ({user_email}) and partner have the same email address.")
+            raise HTTPException(status_code=400, detail="You and your partner cannot have the same email address. Please provide unique emails.")
         return await _handle_first_partner_submission(user_id, submission.wedding_details, submission.current_user_onboarding_details, submission.partner_onboarding_details)
     elif isinstance(submission, SecondPartnerSubmission):
         # Second partner submission (joining existing wedding)
         return await _handle_second_partner_submission(user_id, submission.wedding_id, submission.current_partner_details)
     else:
-        raise HTTPException(status_code=400, detail="Invalid submission type or missing information.")
+        logger.error(f"Onboarding submission failed: Invalid submission type or missing information for user {user_email}.")
+        raise HTTPException(status_code=400, detail="Invalid submission. Please check the provided information.")
 
 @onboarding_router.get("/partner-details")
 async def get_partner_details(email: str):
@@ -73,7 +77,8 @@ async def get_partner_details(email: str):
     wedding_data = wedding_query.get("data")
 
     if not wedding_data:
-        raise HTTPException(status_code=404, detail="No wedding found associated with this email as an expected partner.")
+        logger.info(f"Partner details request for {email}: No wedding found where this email is an expected partner.")
+        raise HTTPException(status_code=404, detail="No wedding found where this email is listed as an expected partner. Please ensure the first partner has completed their onboarding.")
 
     wedding_id = wedding_data[0]["wedding_id"]
     wedding_details = wedding_data[0]["details"]

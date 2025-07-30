@@ -7,8 +7,27 @@ SEND_SAMPLE_RATE = 16000
 SYSTEM_INSTRUCTION = "You are the Sanskara AI Wedding Planner."
 
 # Database Configuration
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///sessions.db")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_ACCESS_TOKEN = os.getenv("SUPABASE_ACCESS_TOKEN") # This is often the DB password
 
+# Construct the Supabase PostgreSQL connection string for ADK's DatabaseSessionService
+# Format: postgresql://[user]:[password]@[host]:[port]/[database_name]
+# Supabase typically uses 'postgres' as the user and 'postgres' as the database name.
+# The host is derived from SUPABASE_URL.
+MEMORY_DATABASE_URL=None
+if SUPABASE_URL and SUPABASE_ACCESS_TOKEN:
+    # Extract host from SUPABASE_URL (e.g., lylsxoupakajkuisjdfl.supabase.co)
+    supabase_host = SUPABASE_URL.replace("https://", "").split("/")[0]
+    MEMORY_DATABASE_URL = f"postgresql://postgres:{SUPABASE_ACCESS_TOKEN}@{supabase_host}:5432/postgres"
+else:
+    # Fallback to SQLite if Supabase details are not fully provided
+    pass
+
+# ADK's SESSION_SERVICE_URI expects a SQLAlchemy compatible URL.
+# We will use the constructed DATABASE_URL directly for it.
+SESSION_SERVICE_URI = "sqlite:///sessions.db"
+DATABASE_URL = MEMORY_DATABASE_URL
 # AgentOps Configuration
 AGENTOPS_API_KEY = os.getenv("AGENTOPS_API_KEY")
 

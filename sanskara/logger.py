@@ -12,14 +12,28 @@ class JsonLogger:
         self.logger.remove()  # Remove default handler
 
         # Determine log level from environment variable, default to INFO
-        log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+        log_level = os.getenv("LOG_LEVEL", "DEBUG").upper()
 
-        # Add a new handler with JSON format
+        # Add a new handler with human-readable format
+        # Choose one of the formats below:
+        
+        # Option 1: Simple format
+        # format_string = "{time} {level} {message}"
+        
+        # Option 2: Detailed format with file/function info
+        format_string = "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}"
+        
+        # Option 3: Compact format
+        # format_string = "{time:HH:mm:ss} | {level} | {message}"
+        
+        # Option 4: Colored format (works well in terminals that support colors)
+        # format_string = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
+        
         self.logger.add(
             sys.stdout,
             level=log_level,
-            format="{message}",
-            serialize=True,
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}", # Detailed human-readable format
+            serialize=False,  # Disable JSON serialization
             enqueue=True # Use a queue for non-blocking logging
         )
 
@@ -29,8 +43,8 @@ class JsonLogger:
             self.logger.add(
                 log_file_path,
                 level=log_level,
-                format="{message}",
-                serialize=True,
+                format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",  # Detailed human-readable format
+                serialize=False,  # Disable JSON serialization
                 rotation="10 MB",  # Rotate file after 10 MB
                 compression="zip", # Compress old log files
                 enqueue=True

@@ -285,3 +285,110 @@ async def get_task_approvals(task_id: str) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Error fetching task approvals for {task_id}: {e}")
         return {"error": str(e)}
+
+
+async def get_complete_wedding_context(wedding_id: str) -> Dict[str, Any]:
+    """
+    Retrieves all wedding context data in a single optimized query using joins.
+    This replaces multiple separate calls to get_wedding_context, get_active_workflows, 
+    get_tasks_for_wedding, get_task_feedback, and get_task_approvals.
+
+    Args:
+        wedding_id: The UUID of the wedding.
+
+    Returns:
+        A dictionary containing:
+        - wedding_data: Wedding details
+        - active_workflows: List of active workflows
+        - all_tasks: List of tasks with feedback and approvals
+    """
+    sql = """
+    WITH wedding_info AS (
+        SELECT * FROM weddings WHERE wedding_id = :wedding_id
+    ),
+    active_workflows_data AS (
+        SELECT * FROM workflows 
+        WHERE wedding_id = :wedding_id 
+        AND status IN ('in_progress', 'paused', 'awaiting_feedback')
+    ),
+    tasks_with_details AS (
+        SELECT 
+            t.*,
+            COALESCE(
+                json_agg(
+                    DISTINCT jsonb_build_object(
+                        'feedback_id', tf.feedback_id,
+                        'user_id', tf.user_id,
+                        'feedback_type', tf.feedback_type,
+                        'content', tf.content,
+                        'created_at', tf.created_at
+                    )
+                ) FILTER (WHERE tf.feedback_id IS NOT NULL), 
+                '[]'::json
+            ) AS feedback,
+            COALESCE(
+                json_agg(
+                    DISTINCT jsonb_build_object(
+                        'approval_id', ta.approval_id,
+                        'approving_party', ta.approving_party,
+                        'status', ta.status,
+                        'approved_by_user_id', ta.approved_by_user_id,
+                        'created_at', ta.created_at,
+                        'updated_at', ta.updated_at
+                    )
+                ) FILTER (WHERE ta.approval_id IS NOT NULL), 
+                '[]'::json
+            ) AS approvals
+        FROM tasks t
+        LEFT JOIN task_feedback tf ON t.task_id = tf.task_id
+        LEFT JOIN task_approvals ta ON t.task_id = ta.task_id
+        WHERE t.wedding_id = :wedding_id
+        GROUP BY t.task_id, t.wedding_id, t.title, t.description, t.is_complete, 
+                 t.due_date, t.priority, t.category, t.status, t.lead_party, 
+                 t.created_at, t.updated_at
+    )
+    SELECT 
+        (SELECT row_to_json(wedding_info) FROM wedding_info) as wedding_data,
+        (SELECT COALESCE(json_agg(active_workflows_data), '[]'::json) FROM active_workflows_data) as active_workflows,
+        (SELECT COALESCE(json_agg(tasks_with_details), '[]'::json) FROM tasks_with_details) as all_tasks;
+    """
+    
+    params = {"wedding_id": wedding_id}
+    
+    try:
+        result = await execute_supabase_sql(sql, params)
+        if result and result.get("status") == "success" and result.get("data"):
+            data = result["data"][0]
+            return {
+                "wedding_data": data.get("wedding_data", {}),
+                "active_workflows": data.get("active_workflows", []),
+                "all_tasks": data.get("all_tasks", [])
+            }
+        else:
+            logger.warning(f"No data found for wedding_id: {wedding_id}")
+            return {
+                "wedding_data": {},
+                "active_workflows": [],
+                "all_tasks": []
+            }
+    except Exception as e:
+        logger.error(f"Error fetching complete wedding context for {wedding_id}: {e}")
+        return {
+            "error": str(e),
+            "wedding_data": {},
+            "active_workflows": [],
+            "all_tasks": []
+        }
+
+if __name__ == "__main__":
+    # Example usage
+    import asyncio
+    wedding_id = "9ce1a9c6-9c47-47e7-97cc-e4e222d0d90c"
+    
+    async def main():
+        context = await get_complete_wedding_context(wedding_id)
+        print("-------------------------------")
+        print(json.dumps(context, indent=2))
+        print("-------------------------------")
+    
+    asyncio.run(main())
