@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from google.adk.models import LlmRequest
 from google.adk.sessions import Session
 from sanskara.sub_agents.setup_agent.agent import setup_agent
-from google.adk.sessions import DatabaseSessionService # Import DatabaseSessionService
+from google.adk.sessions import InMemorySessionService
 from google.adk.runners import Runner
 from google.genai import types
 from config import SESSION_SERVICE_URI # Import SESSION_SERVICE_URI
@@ -77,7 +77,8 @@ async def _check_and_trigger_setup_agent(wedding_id: str, current_partner_email:
     logger.debug(f"Result of fetching updated wedding details: {updated_wedding_details_query}")
     updated_details = updated_wedding_details_query.get("data")[0].get("details", {})
 
-    expected_other_email = updated_details.get("other_partner_email_expected")
+    expected_other_email = updated_details.get("partner_onboarding_details").get('email')
+    logger.debug(f"updated_details: {updated_details}, expected_other_email: {expected_other_email} , current_partner_email: {current_partner_email}")
     if updated_details.get("partner_data") and \
        current_partner_email in updated_details["partner_data"] and \
        expected_other_email and \
@@ -88,17 +89,21 @@ async def _check_and_trigger_setup_agent(wedding_id: str, current_partner_email:
         logger.info(f"Both partners have submitted. Invoking SetupAgent for wedding_id: {wedding_id}.")
         
         # Use DatabaseSessionService for SetupAgent
-        session_service = DatabaseSessionService(SESSION_SERVICE_URI)
+        session_service = InMemorySessionService()
         session = await session_service.create_session(
             app_name="sanskara_wedding_planner",
             user_id="setup-agent-trigger", # A dummy user ID for this trigger
             session_id=wedding_id,
         )
-        # Populate session state with relevant data for SetupAgent
-        session.state["wedding_id"] = wedding_id
-        session.state["partner_data"] = updated_details["partner_data"]
-        session.state["wedding_details"] = updated_details
-
+        # # Populate session state with relevant data for SetupAgent
+        # session.state["wedding_id"] = wedding_id
+        # session.state["partner_data"] = updated_details["partner_data"]
+        # session.state["wedding_details"] = updated_details
+        session.state.update({
+            "wedding_id": wedding_id,
+            "partner_data": updated_details.get("partner_data", {}),
+            "wedding_details": updated_details,
+        })
         runner = Runner(
             app_name="sanskara_wedding_planner",
             agent=setup_agent,

@@ -4,6 +4,7 @@ import asyncio
 import dotenv
 import ast
 import re
+import datetime
 from typing import Optional, Any, Tuple, Dict
 from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset, StdioServerParameters,StdioConnectionParams
 from logger import json_logger as logger # Import the custom JSON logger
@@ -194,6 +195,18 @@ def extract_untrusted_json(text_data: str) -> Optional[Any]:
     else:
         logger.debug(f"extract_untrusted_json: No JSON array or object found in text.")
         return None
+
+def get_current_datetime() -> Dict[str, Any]:
+    """
+    Returns the current UTC date and time in ISO 8601 format.
+    """
+    with logger.contextualize(tool_name="get_current_datetime"):
+        logger.debug("Entering get_current_datetime tool.")
+        current_utc_datetime = datetime.datetime.now(datetime.timezone.utc)
+        result = {"current_datetime_utc": current_utc_datetime.isoformat()}
+        logger.debug(f"Exiting get_current_datetime tool. Result: {result}")
+        return result
+
 
 # async def main():
 #     result = await execute_supabase_sql("SELECT * FROM users where email = 'kpuneeth714@gmail.com';")

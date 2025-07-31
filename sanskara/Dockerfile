@@ -1,21 +1,18 @@
 # Use an official Python runtime as a parent image
-FROM python:3.9-slim-buster
+FROM python:3.12-slim
 
 # Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file into the container at /app
-COPY ./requirements.txt /app/sanskara/requirements.txt
-
-# Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r /app/sanskara/requirements.txt
+# Copy the requirements file and install the dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code
-COPY ./ /app/sanskara/
+COPY . .
 
-# Expose the port that FastAPI runs on
+# Expose the port the app runs on
 EXPOSE 8765
 
-# Command to run the FastAPI application
-# CMD ["uvicorn", "sanskara.main:app", "--host", "0.0.0.0", "--port", "8765", "--reload", "--log-level", "debug"]
-CMD ["python", "app/sanskara/main.py"]
+# Run the application
+CMD ["python", "main.py"]

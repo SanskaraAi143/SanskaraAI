@@ -82,8 +82,8 @@ Once you have generated the complete lists for workflows, tasks, and budget item
 ### **Available Tools**
 
 *   `get_current_datetime()`: Get the current UTC date and time for calculating due dates.
-*   `bulk_create_workflows(wedding_id: str, workflows_data: List[Dict[str, Any]])`: Saves generated workflows.
-*   `bulk_create_tasks(wedding_id: str, tasks_data: List[Dict[str, Any]])`: Saves generated tasks.
+*   `bulk_create_workflows(wedding_id: str, workflows_data: List[Dict[str, Any]])`: Saves generated workflows. - workflows_data [{ "name": str, "description": str }...]
+*   `bulk_create_tasks(wedding_id: str, tasks_data: List[Dict[str, Any]])`: Saves generated tasks. 
 *   `populate_initial_budget(wedding_id: str, budget_details: List[Dict[str, Any]])`: Saves budget items.
 
 ### **Execution Rules & Considerations**

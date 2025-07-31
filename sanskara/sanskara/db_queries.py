@@ -230,14 +230,20 @@ def create_budget_item_query(
     item_name: str,
     category: str,
     amount: float,
-    vendor_name: str = None,
+    vendor_name: Optional[str] = None,
     status: str = 'Pending',
-    contribution_by: str = None
+    contribution_by: Optional[str] = None,
+    item_id: Optional[str] = None
 ) -> str:
+    # If item_id is not provided, the database should generate it (assuming UUID default)
+    # If provided, include it in the insert statement
+    item_id_clause = f"item_id, " if item_id else ""
+    item_id_value = f"'{item_id}', " if item_id else ""
+
     return f"""
-        INSERT INTO budget_items (wedding_id, item_name, category, amount, vendor_name, status, contribution_by)
+        INSERT INTO budget_items ({item_id_clause}wedding_id, item_name, category, amount, vendor_name, status, contribution_by)
         VALUES (
-            '{wedding_id}',
+            {item_id_value}'{wedding_id}',
             '{item_name}',
             '{category}',
             {amount},
@@ -604,3 +610,25 @@ def submit_review_query(booking_id: str, user_id: str, vendor_id: str, rating: f
         VALUES ('{booking_id}', '{user_id}', '{vendor_id}', {rating}, '{comment}')
         RETURNING review_id;
     """
+
+def get_total_budget_query(wedding_id: str) -> str:
+    """
+    Retrieves the total allocated budget for a given wedding_id from the weddings table.
+    Assumes budget is stored in the 'details' JSONB column under a 'total_budget' key.
+    Defaults to 0 if not found.
+    As of now return all wedding details not only budget
+    """
+    # TODO plan on how to get the budget for specific side , bride or groom
+    return f"""
+        SELECT details from weddings
+        WHERE wedding_id = '{wedding_id}';
+    """
+def delete_budget_item_query(item_id: str, wedding_id: str) -> str:
+   """
+   Deletes a budget item by item_id and wedding_id.
+   """
+   return f"""
+       DELETE FROM budget_items
+       WHERE item_id = '{item_id}' AND wedding_id = '{wedding_id}'
+       RETURNING item_id;
+   """

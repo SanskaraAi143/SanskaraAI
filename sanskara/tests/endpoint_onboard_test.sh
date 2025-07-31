@@ -38,7 +38,7 @@ curl -X POST "http://localhost:8765/onboarding/submit" \
 curl -X POST "http://localhost:8765/onboarding/submit" \
 -H "Content-Type: application/json" \
 -d '{
-  "wedding_id": "9ce1a9c6-9c47-47e7-97cc-e4e222d0d90c",
+  "wedding_id": "1e7393a5-2959-4863-b827-af5960666db3",
   "current_partner_details": {
     "name": "Janew Doe",
     "email": "sriramsismarriage@gmail.com",
@@ -46,6 +46,69 @@ curl -X POST "http://localhost:8765/onboarding/submit" \
     "cultural_background": "American",
     "ceremonies": ["Ceremony", "Reception"],
     "budget_range": "50k-70k",
+    "priorities": ["Venue", "Catering", "Photography"],
+    "teamwork_agreement": true
+  }
+}'
+
+
+
+
+
+
+
+
+
+
+
+curl -X POST "http://localhost:8765/onboarding/submit" \
+-H "Content-Type: application/json" \
+-d '{
+  "wedding_details": {
+    "wedding_name": "Puneeth & Piune Doe Wedding",
+    "wedding_date": "2025-10-26",
+    "wedding_location": "Bengaluru, India",
+    "wedding_tradition": "Andhra Rayalaseema Style",
+    "wedding_style": "Traditional Elegant"
+  },
+  "current_user_onboarding_details": {
+    "name": "Puneeth ",
+    "email": "kpuneeth714@gmail.com",
+    "phone": "+1234567890",
+    "role": "Groom",
+    "cultural_background": "Andhra pradesh",
+    "ceremonies": ["Haldi","pellikoduku"],
+    "custom_instructions": "Focus on minimalist decor.",
+    "teamwork_plan": {
+      "venue_decor": "Joint Effort",
+      "catering": "Bride",
+      "guest_list": "Bride",
+      "sangeet_entertainment": "N/A"
+    },
+    "guest_estimate": "300-450",
+    "guest_split": "50/50",
+    "budget_range": "8L",
+    "budget_flexibility": "Flexible",
+    "priorities": ["Venue", "Catering", "Photography"]
+  },
+  "partner_onboarding_details": {
+    "name": "Jane Doe",
+    "email": "sriramsismarriage@gmail.com"
+  }
+}'
+
+
+curl -X POST "http://localhost:8765/onboarding/submit" \
+-H "Content-Type: application/json" \
+-d '{
+  "wedding_id": "3aa1f4fc-ce6c-47da-8d44-55b7c682146e",
+  "current_partner_details": {
+    "name": "Piune Doe",
+    "email": "sriramsismarriage@gmail.com",
+    "role": "Bride",
+    "cultural_background": "Telangana",
+    "ceremonies": ["Haldi", "Pellikuthuru"],
+    "budget_range": "7L",
     "priorities": ["Venue", "Catering", "Photography"],
     "teamwork_agreement": true
   }

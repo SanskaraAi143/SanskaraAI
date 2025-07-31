@@ -16,7 +16,6 @@ ASTRA_DB_APPLICATION_TOKEN = os.getenv("ASTRA_DB_APPLICATION_TOKEN")
 # Astra DB and Supabase connection utilities
 from typing import Optional # Import Optional
 from astrapy import DataAPIClient
-from supabase import create_client, Client
 
 # Astra DB setup
 ASTRA_API_TOKEN = os.getenv("ASTRA_API_TOKEN")
@@ -41,11 +40,11 @@ else:
 # Supabase setup (using correct URL and key, no DATABASE_URL needed)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Optional[Client] = None # Initialize as None
+#supabase: Optional[Client] = None # Initialize as None
 
 if SUPABASE_URL and SUPABASE_KEY:
     try:
-        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        #supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
         print("Supabase client initialized.")
     except Exception as e:
         print(f"Error initializing Supabase client: {e}. supabase client will be None.")

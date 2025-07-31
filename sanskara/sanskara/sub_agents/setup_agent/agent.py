@@ -10,6 +10,7 @@ from sanskara.sub_agents.setup_agent.tools import get_current_datetime, bulk_cre
 setup_agent = LlmAgent(
     name="SetupAgent",
     model="gemini-2.5-flash",
+    #planner=PlanReActPlanner(),
     description="Agent responsible for initializing a new wedding plan, including generating workflows, tasks, and budget items based on onboarding data.",
     instruction=SETUP_AGENT_PROMPT,
     tools=[
@@ -18,6 +19,6 @@ setup_agent = LlmAgent(
         bulk_create_tasks,
         populate_initial_budget
     ],
-    before_model_callback=setup_agent_before_agent_callback
+    #before_model_callback=setup_agent_before_agent_callback
 )
 logger.info("SetupAgent initialized.")

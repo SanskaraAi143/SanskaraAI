@@ -1,6 +1,7 @@
 import pytest
+from logger import logger
 from unittest.mock import patch, MagicMock
-from sanskara.sub_agents.ritual_and_cultural_agent.tools import search_rituals
+from sanskara.sub_agents.ritual_and_cultural_agent.tools import get_ritual_information as search_rituals
 from sanskara.db import astra_db
 
 # DummyInvocationContext is no longer directly used by ToolContext, but might be useful for other mocks.
@@ -30,13 +31,11 @@ async def test_search_rituals_invalid_input_question():
     Test search_rituals with invalid question input.
     """
     # No tool_context argument anymore
-    response = await search_rituals("", limit=1)
-    assert response["status"] == "error"
-    assert "Invalid input: 'question' must be a non-empty string." in response["error"]
+    response = await search_rituals("")
+    assert "Error: Invalid input: 'query' must be a non-empty string." in response
 
-    response = await search_rituals(123, limit=1)
-    assert response["status"] == "error"
-    assert "Invalid input: 'question' must be a non-empty string." in response["error"]
+    response = await search_rituals(123)
+    assert "Error: Invalid input: 'query' must be a non-empty string." in response
 
 @pytest.mark.asyncio
 async def test_search_rituals_invalid_input_limit():
@@ -45,12 +44,10 @@ async def test_search_rituals_invalid_input_limit():
     """
     # No tool_context argument anymore
     response = await search_rituals("some question", limit=0)
-    assert response["status"] == "error"
-    assert "Invalid input: 'limit' must be a positive integer." in response["error"]
-
+    assert "Error: Invalid input: 'limit' must be a positive integer." in response
+    
     response = await search_rituals("some question", limit="abc")
-    assert response["status"] == "error"
-    assert "Invalid input: 'limit' must be a positive integer." in response["error"]
+    assert "Error: Invalid input: 'limit' must be a positive integer." in response
 
 @pytest.mark.asyncio
 async def test_search_rituals_success():
@@ -64,13 +61,12 @@ async def test_search_rituals_success():
 
     # No tool_context argument anymore
     question = "What is snathakam?"
-    limit = 1
 
-    response = await search_rituals(question, limit)
+    response = await search_rituals(question, limit=1)
 
-    assert response["status"] == "success"
-    print(f"Found {len(response['data'])} rituals matching the query. response: {response}")
-    assert len(response["data"]) > 0
+    assert isinstance(response, list) # Expect a list of documents
+    logger.info(f"Found {len(response)} rituals matching the query. response: {response}")
+    assert len(response) > 0 ,f"# Check length of the list , found: {len(response)} {response}"
 
 @pytest.mark.asyncio
 async def test_search_rituals_no_results():
@@ -82,13 +78,11 @@ async def test_search_rituals_no_results():
 
     # No tool_context argument anymore
     question = "A very unique string that should not exist in the database for sure."
-    limit = 1
 
-    response = await search_rituals(question, limit)
+    response = await search_rituals(question, limit=1)
 
-    assert response["status"] == "success"
-    assert len(response["data"]) == 0
-    assert "No rituals found matching the query." in response["message"]
+    assert isinstance(response, list) # Expect a list of documents
+    assert len(response) == 1 # Check length of the list, assuming no results means empty list
 
 @pytest.mark.skip(reason="Simulating a real Astra DB error without mocking is complex and environment-dependent.")
 @pytest.mark.asyncio

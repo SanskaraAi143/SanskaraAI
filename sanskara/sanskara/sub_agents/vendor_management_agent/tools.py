@@ -100,7 +100,7 @@ def add_to_shortlist(wedding_id: str, linked_vendor_id: str, vendor_name: str, v
             return {"status": "failure", "message": "An unexpected error occurred during shortlisting."}
 
 
-def create_booking(wedding_id: str, user_id: str, vendor_id: str, event_date: str, total_amount: float, advance_amount_due: float = 0.0, paid_amount: float = 0.0, booking_status: str = 'pending_confirmation') -> Dict[str, str]:
+def create_booking(user_id: str, vendor_id: str, event_date: str, total_amount: float, advance_amount_due: float = 0.0, paid_amount: float = 0.0, booking_status: str = 'pending_confirmation') -> Dict[str, str]:
     """
     Creates a formal booking record in the `bookings` table.
     Args:
@@ -119,7 +119,6 @@ def create_booking(wedding_id: str, user_id: str, vendor_id: str, event_date: st
         logger.debug(f"Entering create_booking tool for wedding_id: {wedding_id}, vendor_id: {vendor_id}.")
         try:
             sql_query = create_booking_query(
-                wedding_id=wedding_id,
                 user_id=user_id,
                 vendor_id=vendor_id,
                 event_date=event_date,
@@ -172,3 +171,50 @@ def submit_review(booking_id: str, user_id: str, vendor_id: str, rating: float, 
         except Exception as e:
             logger.error(f"Error in submit_review for booking {booking_id}, user {user_id}: {e}", exc_info=True)
             return {"status": "failure", "message": "An unexpected error occurred during review submission."}
+
+
+if __name__ == "__main__":
+    # test get vendor using id , add vendor to shortlist, create booking and submit review
+    try:
+        vendor_id = "20d9bbe1-994d-461c-9358-c810211787c4"
+        user_id = "fca04215-2af3-4a4e-bcfa-c27a4f54474c"
+        wedding_id = "9ce1a9c6-9c47-47e7-97cc-e4e222d0d90c"
+        # print("=== Testing Get Vendor Details ===")
+        # vendor_details = get_vendor_details(vendor_id)
+        # print(f"Vendor Details: {vendor_details}")
+        # print("\n=== Testing Add to Shortlist ===")
+        # shortlist_result = add_to_shortlist(wedding_id, vendor_id, vendor_details.get("vendor_name", "Unknown Vendor"), vendor_details.get("category", "Unknown Category"))
+        # print(f"Shortlist Result: {shortlist_result}")
+        # print("\n=== Testing Create Booking ===")
+        # booking_result = create_booking(
+        #     wedding_id=wedding_id,
+        #     user_id=user_id,
+        #     vendor_id=vendor_id,
+        #     event_date="2024-12-25",
+        #     total_amount=5000.0,
+        #     advance_amount_due=1000.0,
+        #     paid_amount=500.0,
+        #     booking_status="pending_confirmation"
+        # )
+        # print(f"Booking Result: {booking_result}")
+        # print("\n=== Testing Submit Review ===")
+        review_result = submit_review(
+            booking_id="6615ff38-bd82-465a-b915-32c4350c9cc7",
+            user_id=user_id,
+            vendor_id=vendor_id,
+            rating=4.5,
+            comment="Great service and very professional!"
+        )
+        print(f"Review Result: {review_result}")
+        # print("\n=== Testing Search Vendors ===")
+        # vendors = search_vendors(
+        #     category="caterer",
+        #     city="Bangalore",
+        #     budget_range={"min": 2000, "max": 10000},
+        #     style_keywords=["Indian", "Vegetarian"]
+        # )
+        # print(f"Found Vendors: {vendors}")
+    except Exception as e:
+        logger.error(f"An error occurred during testing: {e}", exc_info=True)
+    finally:
+        logger.info("Vendor management agent tests completed.")
