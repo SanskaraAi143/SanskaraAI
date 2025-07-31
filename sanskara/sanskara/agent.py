@@ -125,8 +125,8 @@ async def orchestrator_before_agent_callback(
 
 orchestrator_agent = LlmAgent(
     name="OrchestratorAgent",
-    model="gemini-2.5-flash",
-    #model="gemini-2.0-flash-live-001",
+    #model="gemini-2.5-flash",
+    model="gemini-2.0-flash-live-001",
     description="Orchestrates the entire user workflow for Sanskara AI, including onboarding, ritual search, budget management, and vendor search. The user only interacts with this agent.",
     instruction=ORCHESTRATOR_AGENT_PROMPT,
     sub_agents=[
