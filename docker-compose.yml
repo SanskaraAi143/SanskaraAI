@@ -3,18 +3,9 @@ version: '3.8'
 services:
   web:
     build:
-      context: .
+      context: sanskara
       dockerfile: sanskara/Dockerfile
     ports:
-      - "8000:8000"
+      - "8765:8765"
     volumes:
       - ./sanskara:/app/sanskara
-    depends_on:
-      - redis
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-  redis:
-    image: "redis:alpine"
-    ports:
-      - "6379:6379"

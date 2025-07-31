@@ -73,7 +73,7 @@ async def orchestrator_before_agent_callback(
                     "active_workflows": None,
                     "all_tasks": None,
                     "current_wedding_id": None,
-                    "current_user_id": callback_context.state.get("user_id"),
+                    "current_user_id": callback_context.state.get("user_id", None),
                     "current_user_role": "bride"
                 }
             )
