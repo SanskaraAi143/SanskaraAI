@@ -9,6 +9,12 @@ from api.weddings.routes import weddings_router
 from agent_websocket.service import websocket_endpoint
 
 load_dotenv()
+import logging
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+)
 AGENTOPS_API_KEY = os.getenv("AGENTOPS_API_KEY")
 agentops.init(
     api_key=AGENTOPS_API_KEY,

@@ -154,6 +154,46 @@ async def create_workflow(
         logger.error(f"Error creating workflow {workflow_name} for wedding {wedding_id}: {e}")
         return {"status": "error", "message": str(e)}
 
+async def upsert_workflow(
+    wedding_id: str,
+    workflow_name: str,
+    status: str = 'not_started',
+    context_summary: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Creates a new workflow or updates an existing one if a workflow with the same
+    wedding_id and workflow_name already exists.
+
+    Args:
+        wedding_id: The UUID of the wedding this workflow belongs to.
+        workflow_name: The name of the workflow (e.g., 'CoreVendorBookingWorkflow').
+        status: The initial status of the workflow (default: 'not_started').
+        context_summary: Optional. A JSONB object for initial context.
+
+    Returns:
+        A dictionary containing the created/updated workflow's data or an error.
+    """
+    # First, try to find an existing workflow
+    sql_select = "SELECT workflow_id FROM workflows WHERE wedding_id = :wedding_id AND workflow_name = :workflow_name;"
+    params_select = {"wedding_id": wedding_id, "workflow_name": workflow_name}
+    
+    try:
+        result_select = await execute_supabase_sql(sql_select, params_select)
+        
+        if result_select and result_select.get("status") == "success" and result_select.get("data"):
+            # Workflow exists, update it
+            existing_workflow_id = result_select["data"][0]["workflow_id"]
+            logger.info(f"Workflow '{workflow_name}' already exists for wedding {wedding_id}. Updating.")
+            return await update_workflow_status(existing_workflow_id, status, context_summary)
+        else:
+            # Workflow does not exist, create a new one
+            logger.info(f"Workflow '{workflow_name}' does not exist for wedding {wedding_id}. Creating new.")
+            return await create_workflow(wedding_id, workflow_name, status, context_summary)
+            
+    except Exception as e:
+        logger.error(f"Error in upsert_workflow for {workflow_name} (wedding {wedding_id}): {e}")
+        return {"status": "error", "message": str(e)}
+
 async def update_task_details(task_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
     """
     Updates details of an existing task in the 'tasks' table.
@@ -241,6 +281,70 @@ async def create_task(
         logger.error(f"Error creating task {title} for wedding {wedding_id}: {e}")
         return {"status": "error", "message": str(e)}
     
+
+async def upsert_task(
+    wedding_id: str,
+    title: str,
+    description: Optional[str] = None,
+    is_complete: bool = False,
+    due_date: Optional[str] = None, # Assuming YYYY-MM-DD format
+    priority: str = 'medium',
+    category: Optional[str] = None,
+    status: str = 'No Status',
+    lead_party: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Creates a new task or updates an existing one if a task with the same
+    wedding_id and title already exists.
+
+    Args:
+        wedding_id: The UUID of the wedding this task belongs to.
+        title: The title of the task.
+        description: Optional. A detailed description of the task.
+        is_complete: Whether the task is completed (default: False).
+        due_date: Optional. The due date of the task in YYYY-MM-DD format.
+        priority: The priority of the task (default: 'medium').
+        category: Optional. The category of the task.
+        status: The status of the task (default: 'No Status').
+        lead_party: Optional. The responsible party ('bride_side', 'groom_side', 'couple').
+
+    Returns:
+        A dictionary containing the created/updated task's data or an error.
+    """
+    # First, try to find an existing task
+    sql_select = "SELECT task_id FROM tasks WHERE wedding_id = :wedding_id AND title = :title;"
+    params_select = {"wedding_id": wedding_id, "title": title}
+    
+    try:
+        result_select = await execute_supabase_sql(sql_select, params_select)
+        
+        if result_select and result_select.get("status") == "success" and result_select.get("data"):
+            # Task exists, update it
+            existing_task_id = result_select["data"][0]["task_id"]
+            logger.info(f"Task '{title}' already exists for wedding {wedding_id}. Updating.")
+            updates = {
+                "description": description,
+                "is_complete": is_complete,
+                "due_date": due_date,
+                "priority": priority,
+                "category": category,
+                "status": status,
+                "lead_party": lead_party
+            }
+            # Filter out None values from updates to avoid overwriting with None if not provided
+            updates = {k: v for k, v in updates.items() if v is not None}
+            return await update_task_details(existing_task_id, updates)
+        else:
+            # Task does not exist, create a new one
+            logger.info(f"Task '{title}' does not exist for wedding {wedding_id}. Creating new.")
+            return await create_task(
+                wedding_id, title, description, is_complete, due_date,
+                priority, category, status, lead_party
+            )
+            
+    except Exception as e:
+        logger.error(f"Error in upsert_task for {title} (wedding {wedding_id}): {e}")
+        return {"status": "error", "message": str(e)}
 
 async def get_task_feedback(task_id: str) -> List[Dict[str, Any]]:
     """

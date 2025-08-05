@@ -16,19 +16,19 @@ from sanskara.sub_agents.ritual_and_cultural_agent.agent import ritual_and_cultu
 #from sanskara.sub_agents.guest_and_communication_agent.agent import guest_and_communication_agent
 #from sanskara.sub_agents.task_and_timeline_agent.agent import task_and_timeline_agent
 
-
+#from google.adk.plugins.logging_plugin import LoggingPlugin
 from sanskara.prompt import ORCHESTRATOR_AGENT_PROMPT
 from sanskara.tools import (
     get_active_workflows,
     get_tasks_for_wedding,
     update_workflow_status,
-    create_workflow,
     update_task_details,
-    create_task,
     get_wedding_context, # Added for context priming
     get_task_feedback,   # Added for context priming
     get_task_approvals,  # Added for context priming
     get_complete_wedding_context,  # New optimized function
+    upsert_workflow, # New tool for creating or updating workflows
+    upsert_task, # New tool for creating or updating tasks
 )
 from sanskara.helpers import get_current_datetime # For fetching user and wedding info
 from logger import json_logger as logger # Import the custom JSON logger
@@ -91,6 +91,14 @@ async def orchestrator_before_agent_callback(
             active_workflows = context_data["active_workflows"]
             all_tasks = context_data["all_tasks"]
             
+            # --- NEW ADDITION: Check wedding status for Orchestrator activation ---
+            if wedding_data and wedding_data.get("status") != "active":
+                logger.info(f"Wedding {wedding_id} is not active (status: {wedding_data.get('status')}). Orchestrator will not process requests.")
+                return LlmResponse(
+                    text=f"Your wedding planning setup is currently in '{wedding_data.get('status')}' status. Please complete the onboarding process before I can fully assist you. I'll be ready to help once your wedding status is 'active'!"
+                )
+            # --- END NEW ADDITION ---
+
             logger.info(
                 f"Successfully gathered all wedding context for wedding {wedding_id} in single query. "
                 f"Found {len(active_workflows)} active workflows and {len(all_tasks)} tasks."
@@ -141,16 +149,16 @@ orchestrator_agent = LlmAgent(
     tools=[
         get_active_workflows,
         update_workflow_status,
-        create_workflow,
         update_task_details,
-        create_task,
         get_current_datetime,
+        upsert_workflow, # Using the new upsert tool
+        upsert_task, # Using the new upsert tool
         vendor_management_agent_tool,
         budget_and_expense_agent_tool,
         ritual_and_cultural_agent_tool,
         #creative_agent_tool,
         #guest_and_communication_tool,
-        #task_and_timeline_tool,        
+        #task_and_timeline_tool,
     ],
     before_agent_callback= orchestrator_before_agent_callback,
 )

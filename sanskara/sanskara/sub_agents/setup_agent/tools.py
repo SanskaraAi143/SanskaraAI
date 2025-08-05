@@ -20,20 +20,17 @@ async def bulk_create_workflows(tool_context: ToolContext, wedding_id: str, work
 
         insert_values = []
         for workflow in workflows_data:
-            workflow_name = workflow.get("workflow_name", "Unnamed Workflow").replace("'", "''")
-            workflow_status = workflow.get("status", "not_started")
-            context_summary = workflow.get("context_summary", {})
-            context_summary_str = json.dumps(context_summary).replace("'", "''")
-            insert_values.append(f"('{workflow_name}', '{workflow_status}', '{wedding_id}', '{context_summary_str}')")
+            workflow_name = workflow.get("name", "Unnamed Workflow").replace("'", "''")
+            workflow_status = workflow.get("description", "not_started")
+            insert_values.append(f"('{workflow_name}', '{workflow_status}', '{wedding_id}')")
 
         sql = f"""
-        INSERT INTO workflows (workflow_name, status, wedding_id, context_summary)
+        INSERT INTO workflows (workflow_name, status, wedding_id)
         VALUES {", ".join(insert_values)};
         """
         logger.debug(f"Executing SQL for bulk_create_workflows: {sql}")
         try:
             result = await execute_supabase_sql(sql)
-
             if result.get("status") == "success":
                 logger.info(f"Successfully created {len(workflows_data)} workflows for wedding {wedding_id}.")
                 return {"status": "success", "message": f"Successfully created {len(workflows_data)} workflows."}
@@ -165,3 +162,26 @@ async def setup_agent_before_agent_callback(callback_context:CallbackContext) ->
         except Exception as e:
             logger.error(f"Unexpected error in setup_agent_before_agent_callback for wedding {wedding_id}: {e}", exc_info=True)
             return False
+        
+if __name__ == "__main__":
+    # This is just a placeholder to avoid errors when importing this module
+    # in other parts of the application.
+    # test the workflows function 
+    workflows_data = [
+        {
+            "name": "Test Workflow 1",
+            "description": "This is a test workflow"
+        },
+        {
+            "name": "Test Workflow 2",
+            "description": "This is another test workflow"
+        }
+    ]
+    wedding_id = "test_wedding_id"
+    # Call the function to test it
+    async def test_bulk_create_workflows():
+        result = await bulk_create_workflows(None, wedding_id, workflows_data)
+        print(result)
+    import asyncio
+    asyncio.run(test_bulk_create_workflows())
+    #PYTHONPATH=/home/puneeth/programmes/Sanskara_AI/SanskaraAI/sanskara python sanskara/sub_agents/setup_agent/tools.py

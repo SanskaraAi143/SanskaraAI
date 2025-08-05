@@ -4,6 +4,8 @@ from google.genai import types
 from logger import json_logger as logger # Import the custom JSON logger
 from sanskara.sub_agents.google_search_agent.agent import google_search_agent
 from google.adk.tools.agent_tool import AgentTool
+from google.adk.code_executors import BuiltInCodeExecutor
+
 # Example Interactions for BudgetAndExpenseAgent:
 #
 # --- Expense Management ---
@@ -48,12 +50,11 @@ from google.adk.tools.agent_tool import AgentTool
 from sanskara.sub_agents.budget_and_expense_agent.prompt import BUDGET_AND_EXPENSE_AGENT_PROMPT
 from sanskara.sub_agents.budget_and_expense_agent.tools import (
     get_total_budget,
-    add_expense,
     update_expense,
     delete_expense,
     get_all_expenses,
-    code_execution_tool,
-    
+    #code_execution_tool,
+    upsert_budget_item, # Using the new upsert tool
 )
 budget_google_search_tool = AgentTool(agent=google_search_agent)
 
@@ -62,14 +63,15 @@ budget_and_expense_agent = LlmAgent(
     model="gemini-2.5-flash",
     description="Agent responsible for managing the wedding budget and tracking expenses.",
     instruction=BUDGET_AND_EXPENSE_AGENT_PROMPT,
+    code_executor=BuiltInCodeExecutor(),
     tools=[
         get_total_budget,
-        add_expense,
         update_expense,
         delete_expense,
         get_all_expenses,
-        code_execution_tool,
-        budget_google_search_tool
+        #code_execution_tool,
+        upsert_budget_item, # Using the new upsert tool
+        budget_google_search_tool, # Using the Google Search Agent tool
     ],
 )
 logger.info("BudgetAndExpenseAgent initialized.")

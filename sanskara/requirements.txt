@@ -13,3 +13,4 @@ celery
 pytest-asyncio
 agentops
 twilio
+sendgrid

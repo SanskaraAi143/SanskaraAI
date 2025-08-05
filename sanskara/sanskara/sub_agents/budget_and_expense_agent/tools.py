@@ -142,6 +142,85 @@ async def add_expense(
             return {"status": "error", "message": f"Failed to add expense: {result.get('error')}"}
 
 
+async def upsert_budget_item(
+    wedding_id: str,
+    item_name: str,
+    category: str,
+    amount: float,
+    vendor_name: Optional[str] = None,
+    contribution_by: Optional[str] = None,
+    status: Optional[str] = None # Allow updating status through upsert
+) -> Dict[str, Any]:
+    """
+    Creates a new budget item or updates an existing one if a budget item with the same
+    wedding_id, item_name, and category already exists.
+
+    Args:
+        wedding_id: The UUID of the wedding this item belongs to.
+        item_name: The name of the budget item.
+        category: The category of the budget item.
+        amount: The estimated or actual amount.
+        vendor_name: Optional. The name of the associated vendor.
+        contribution_by: Optional. Who is contributing to this expense.
+        status: Optional. The status of the budget item (e.g., 'Pending', 'Booked', 'Paid').
+
+    Returns:
+        A dictionary indicating success or failure.
+    """
+    with logger.contextualize(wedding_id=wedding_id, item_name=item_name, category=category):
+        logger.debug(f"Attempting to upsert budget item '{item_name}' (category: {category}) for wedding {wedding_id}")
+        
+        # First, try to find an existing budget item
+        sql_select = """
+            SELECT item_id FROM budget_items
+            WHERE wedding_id = :wedding_id AND item_name = :item_name AND category = :category;
+        """
+        params_select = {
+            "wedding_id": wedding_id,
+            "item_name": item_name,
+            "category": category
+        }
+        
+        try:
+            result_select = await execute_supabase_sql(sql_select, params_select)
+            
+            if result_select and result_select.get("status") == "success" and result_select.get("data"):
+                # Item exists, update it
+                existing_item_id = result_select["data"][0]["item_id"]
+                logger.info(f"Budget item '{item_name}' (category: {category}) already exists for wedding {wedding_id}. Updating.")
+                
+                updates = {
+                    "item_name": item_name, # Include item_name and category in updates to ensure they are set if only amount changes
+                    "category": category,
+                    "amount": amount,
+                    "vendor_name": vendor_name,
+                    "contribution_by": contribution_by,
+                    "status": status
+                }
+                # Filter out None values from updates to avoid overwriting with None if not provided
+                updates = {k: v for k, v in updates.items() if v is not None}
+
+                return await update_expense(
+                    expense_id=existing_item_id,
+                    wedding_id=wedding_id, # wedding_id is needed by update_expense (though not used in query)
+                    **updates # Pass filtered updates directly
+                )
+            else:
+                # Item does not exist, create a new one
+                logger.info(f"Budget item '{item_name}' (category: {category}) does not exist for wedding {wedding_id}. Creating new.")
+                return await add_expense(
+                    wedding_id=wedding_id,
+                    item_name=item_name,
+                    category=category,
+                    amount=amount,
+                    vendor_name=vendor_name,
+                    contribution_by=contribution_by
+                )
+                
+        except Exception as e:
+            logger.error(f"Error in upsert_budget_item for {item_name} (wedding {wedding_id}): {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
 async def code_execution_tool(code: str, language: str) -> Dict[str, Any]:
     """
     Executes arbitrary code in a specified language within a simulated environment.

@@ -11,7 +11,7 @@ from sanskara.sub_agents.vendor_management_agent.tools import (
     create_booking,
     submit_review
 )
-from sanskara.sub_agents.google_search_agent.agent import google_search_agent
+from sanskara.sub_agents.google_search_agent.agent import google_search_agent,google_search
 from google.adk.tools import agent_tool
 
 # make google agent as tool
@@ -21,12 +21,13 @@ google_search_agent_tool = agent_tool.AgentTool(agent=google_search_agent)
 vendor_management_agent = LlmAgent(
     name="VendorManagementAgent",
     model="gemini-2.5-flash",
-    planner=PlanReActPlanner(),
+    #planner=PlanReActPlanner(),
     #model="gemini-2.0-flash-live-001",
     description="Agent responsible for managing vendor interactions, searching, shortlisting, booking, and reviewing vendors.",
     instruction=VENDOR_MANAGEMENT_AGENT_PROMPT,
     tools=[
-        google_search_agent_tool,  # Google Search Tool for vendor-related queries
+        google_search
+        #google_search_agent_tool,  # Google Search Tool for vendor-related queries
         # search_vendors,
         # get_vendor_details,
         # add_to_shortlist,

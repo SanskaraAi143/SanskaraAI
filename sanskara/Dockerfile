@@ -1,17 +1,29 @@
 # Use an official Python runtime as a parent image
-FROM python:3.12-slim
+FROM python:3.13-alpine
 
 # Set the working directory in the container
 WORKDIR /app
 
-# Install nodejs and npm for npx (for supabase mcp)
-RUN apt-get update && \
-    apt-get install -y nodejs npm && \
-    rm -rf /var/lib/apt/lists/*
+# Install Rust, Cargo, and necessary build dependencies, including GEOS and NumPy development headers
+RUN apk add --no-cache \
+      build-base \
+      curl \
+      git \
+      libffi-dev \
+      openssl-dev \
+      pkgconfig \
+      rust \
+      cargo \
+      nodejs \
+      npm \
+      geos-dev \
+      py3-numpy-dev
 
 # Copy the requirements file and install the dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir uv
+# Set the environment variable for pyo3 before installing dependencies
+RUN PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 uv pip install --no-cache-dir -r requirements.txt --system
 
 # Copy the rest of the application code
 COPY . .

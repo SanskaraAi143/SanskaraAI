@@ -2,7 +2,14 @@ from typing import Dict, Any, List, Optional
 import json
 def get_wedding_by_expected_partner_email_query(email: str) -> str:
     return f"""
-        SELECT wedding_id, details
+        SELECT 
+            wedding_id, 
+            wedding_name,
+            wedding_date,
+            wedding_location,
+            wedding_tradition,
+            wedding_style,
+            details
         FROM weddings
         WHERE details @> '{{"other_partner_email_expected":"{email}"}}'::jsonb
         LIMIT 1;
@@ -117,6 +124,10 @@ def create_workflow_query(wedding_id: str, workflow_name: str, status: str, cont
     return f"""
         INSERT INTO workflows (wedding_id, workflow_name, status, context_summary)
         VALUES ('{wedding_id}', '{workflow_name}', '{status}', '{context_summary}'::jsonb)
+        ON CONFLICT (wedding_id, workflow_name) DO UPDATE SET
+            status = EXCLUDED.status,
+            context_summary = EXCLUDED.context_summary,
+            updated_at = NOW()
         RETURNING workflow_id;
     """
 
@@ -198,6 +209,15 @@ def create_task_query(
             '{status}',
             {f"'{lead_party}'" if lead_party else 'NULL'}
         )
+        ON CONFLICT (wedding_id, title) DO UPDATE SET
+            description = EXCLUDED.description,
+            is_complete = EXCLUDED.is_complete,
+            due_date = EXCLUDED.due_date,
+            priority = EXCLUDED.priority,
+            category = EXCLUDED.category,
+            status = EXCLUDED.status,
+            lead_party = EXCLUDED.lead_party,
+            updated_at = NOW()
         RETURNING task_id;
     """
 
@@ -251,6 +271,12 @@ def create_budget_item_query(
             '{status}',
             {f"'{contribution_by}'" if contribution_by else 'NULL'}
         )
+        ON CONFLICT (wedding_id, item_name, category) DO UPDATE SET
+            amount = EXCLUDED.amount,
+            vendor_name = EXCLUDED.vendor_name,
+            status = EXCLUDED.status,
+            contribution_by = EXCLUDED.contribution_by,
+            updated_at = NOW()
         RETURNING item_id;
     """
 
