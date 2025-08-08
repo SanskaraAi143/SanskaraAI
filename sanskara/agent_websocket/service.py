@@ -11,6 +11,7 @@ from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.sessions import DatabaseSessionService
+from google.adk.artifacts import InMemoryArtifactService
 from google.genai import types
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -20,8 +21,9 @@ from sanskara.helpers import execute_supabase_sql
 from config import VOICE_NAME, SEND_SAMPLE_RATE, SESSION_SERVICE_URI
 
 
-# Initialize session service and agent once for the application
+# Initialize session service, artifact service, and agent once for the application
 session_service = DatabaseSessionService(db_url=SESSION_SERVICE_URI)
+artifact_service = InMemoryArtifactService()
 agent_instance = root_agent # Use the RootAgent as the main agent
 
 async def websocket_endpoint(websocket: WebSocket):
@@ -82,6 +84,7 @@ async def websocket_endpoint(websocket: WebSocket):
         app_name="multimodal_assistant",
         agent=agent_instance,
         session_service=session_service,
+        artifact_service=artifact_service,
     )
 
     live_request_queue = LiveRequestQueue()

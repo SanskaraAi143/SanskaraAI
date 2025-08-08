@@ -658,3 +658,125 @@ def delete_budget_item_query(item_id: str, wedding_id: str) -> str:
        WHERE item_id = '{item_id}' AND wedding_id = '{wedding_id}'
        RETURNING item_id;
    """
+
+# Image and Artifact Management Queries
+
+def create_image_artifact_query(
+    wedding_id: str,
+    artifact_filename: str,
+    supabase_url: str,
+    generation_prompt: str = None,
+    image_type: str = 'generated',
+    metadata: str = None
+) -> str:
+    """
+    Creates a record for an image artifact generated or uploaded for a wedding.
+    """
+    return f"""
+        INSERT INTO image_artifacts (wedding_id, artifact_filename, supabase_url, generation_prompt, image_type, metadata)
+        VALUES (
+            '{wedding_id}',
+            '{artifact_filename}',
+            '{supabase_url}',
+            {f"'{generation_prompt}'" if generation_prompt else 'NULL'},
+            '{image_type}',
+            {f"'{metadata}'" if metadata else 'NULL'}
+        )
+        RETURNING artifact_id;
+    """
+
+def get_image_artifacts_by_wedding_query(wedding_id: str, image_type: str = None) -> str:
+    """
+    Retrieves all image artifacts for a wedding, optionally filtered by type.
+    """
+    type_filter = f"AND image_type = '{image_type}'" if image_type else ""
+    return f"""
+        SELECT artifact_id, artifact_filename, supabase_url, generation_prompt, image_type, metadata, created_at
+        FROM image_artifacts
+        WHERE wedding_id = '{wedding_id}' {type_filter}
+        ORDER BY created_at DESC;
+    """
+
+def update_mood_board_item_with_artifact_query(item_id: str, artifact_id: str) -> str:
+    """
+    Links a mood board item to an image artifact.
+    """
+    return f"""
+        UPDATE mood_board_items
+        SET artifact_id = '{artifact_id}',
+            updated_at = NOW()
+        WHERE item_id = '{item_id}'
+        RETURNING item_id;
+    """
+
+def get_mood_board_items_with_artifacts_query(mood_board_id: str) -> str:
+    """
+    Retrieves mood board items along with their associated image artifacts.
+    """
+    return f"""
+        SELECT 
+            mbi.item_id, 
+            mbi.image_url, 
+            mbi.note, 
+            mbi.category,
+            mbi.created_at as item_created_at,
+            ia.artifact_id,
+            ia.artifact_filename,
+            ia.generation_prompt,
+            ia.image_type,
+            ia.metadata as artifact_metadata
+        FROM mood_board_items mbi
+        LEFT JOIN image_artifacts ia ON mbi.artifact_id = ia.artifact_id
+        WHERE mbi.mood_board_id = '{mood_board_id}'
+        ORDER BY mbi.created_at DESC;
+    """
+
+def delete_mood_board_item_query(item_id: str) -> str:
+    """
+    Deletes a mood board item.
+    """
+    return f"""
+        DELETE FROM mood_board_items
+        WHERE item_id = '{item_id}'
+        RETURNING item_id;
+    """
+
+def update_mood_board_item_query(item_id: str, note: str = None, category: str = None) -> str:
+    """
+    Updates a mood board item's note and/or category.
+    """
+    updates = []
+    if note is not None:
+        updates.append(f"note = '{note}'")
+    if category is not None:
+        updates.append(f"category = '{category}'")
+    
+    if not updates:
+        return f"SELECT item_id FROM mood_board_items WHERE item_id = '{item_id}';"
+    
+    return f"""
+        UPDATE mood_board_items
+        SET {', '.join(updates)}, updated_at = NOW()
+        WHERE item_id = '{item_id}'
+        RETURNING item_id;
+    """
+
+def get_mood_board_stats_query(wedding_id: str) -> str:
+    """
+    Gets statistics about mood boards for a wedding.
+    """
+    return f"""
+        SELECT 
+            mb.mood_board_id,
+            mb.name as mood_board_name,
+            COUNT(mbi.item_id) as item_count,
+            COUNT(CASE WHEN ia.image_type = 'generated' THEN 1 END) as generated_images,
+            COUNT(CASE WHEN ia.image_type = 'uploaded' THEN 1 END) as uploaded_images,
+            mb.created_at as board_created_at
+        FROM mood_boards mb
+        LEFT JOIN mood_board_items mbi ON mb.mood_board_id = mbi.mood_board_id
+        LEFT JOIN image_artifacts ia ON mbi.artifact_id = ia.artifact_id
+        WHERE mb.wedding_id = '{wedding_id}'
+        GROUP BY mb.mood_board_id, mb.name, mb.created_at
+        ORDER BY mb.created_at DESC;
+    """

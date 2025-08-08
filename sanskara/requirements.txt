@@ -14,3 +14,15 @@ pytest-asyncio
 agentops
 twilio
 sendgrid
+# Image generation and storage dependencies
+google-generativeai
+supabase
+aiohttp
+Pillow
+# Additional testing dependencies
+pytest-mock
+# Image generation and storage dependencies
+google-generativeai
+supabase
+aiohttp
+pillow
