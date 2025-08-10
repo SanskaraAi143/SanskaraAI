@@ -28,21 +28,27 @@ class SimpleClient:
         try:
             ws_url_with_user = f"{WS_URL}?user_id={USER_ID}"
             self.log(f"Connecting to {ws_url_with_user}")
-            
             self.websocket = await websockets.connect(ws_url_with_user)
-            
-            # Wait for ready message
-            ready_message = await self.websocket.recv()
-            ready_data = json.loads(ready_message)
-            
+            # Expect an init first, then ready
+            first_msg = await self.websocket.recv()
+            try:
+                first_data = json.loads(first_msg)
+            except Exception:
+                first_data = {}
+            if first_data.get("type") == "init":
+                self.log("⏳ Initializing context...")
+                # Wait for ready
+                ready_message = await self.websocket.recv()
+                ready_data = json.loads(ready_message)
+            else:
+                ready_data = first_data
             if ready_data.get("type") == "ready":
                 self.connected = True
-                self.log("✅ Connected successfully!")
+                self.log("✅ Connected successfully (context primed)!")
                 return True
             else:
-                self.log(f"❌ Unexpected ready message: {ready_data}")
+                self.log(f"❌ Unexpected handshake messages: {first_data} then {ready_data}")
                 return False
-                
         except Exception as e:
             self.log(f"❌ Connection failed: {e}")
             return False

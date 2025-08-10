@@ -16,8 +16,9 @@ logger = logging.getLogger(__name__)
 
 # Load a CPU‐optimized static embedding model once
 EMBED_MODEL_NAME = "sentence-transformers/static-retrieval-mrl-en-v1"
-_EMBED_MODEL = SentenceTransformer(EMBED_MODEL_NAME, device="cpu")  # CPU only[1]
-_EMBED_DIM = _EMBED_MODEL.get_sentence_embedding_dimension()  # 1536
+_EMBED_MODEL = SentenceTransformer(EMBED_MODEL_NAME, device="cpu")  # CPU only
+_EMBED_DIM = _EMBED_MODEL.get_sentence_embedding_dimension()
+logger.info(f"SupabaseMemoryService: Loaded embedding model '{EMBED_MODEL_NAME}' with dim={_EMBED_DIM}")
 
 class SupabaseMemoryService(BaseMemoryService):
     """Memory service using Supabase + pgvector + local CPU embeddings."""
@@ -57,6 +58,25 @@ class SupabaseMemoryService(BaseMemoryService):
         else:
             logger.info("Inserted %d memory rows.", len(rows))
 
+    async def add_text_to_memory(self, *, app_name: str, user_id: str, text: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Add a single text memory with embedding. Stores metadata inside content JSON for traceability."""
+        try:
+            if not text or not text.strip():
+                return
+            embedding: List[float] = _EMBED_MODEL.encode([text], show_progress_bar=False)[0]
+            vec_literal = f"ARRAY[{','.join(str(x) for x in embedding)}]::vector"
+            content_payload = {"text": text}
+            if metadata:
+                content_payload["metadata"] = metadata
+            content_json = json.dumps(content_payload).replace("'", "''")
+            sql = (
+                "INSERT INTO memories (app_name, user_id, content, embedding) VALUES ("
+                f"{sql_quote_value(app_name)}, {sql_quote_value(user_id)}, '{content_json}', {vec_literal}) RETURNING 1;"
+            )
+            await execute_supabase_sql(sql)
+        except Exception as e:
+            logger.warning(f"add_text_to_memory failed: {e}")
+
     @override
     async def search_memory(
         self, *, app_name: str, user_id: str, query: str
@@ -82,11 +102,17 @@ class SupabaseMemoryService(BaseMemoryService):
         memories: List[MemoryEntry] = []
         for row in res["data"]:
             content = row.get("content", {})
-            text = content.get("text", "")
+            if isinstance(content, dict):
+                text = content.get("text", "")
+                meta = content.get("metadata", {}) if isinstance(content.get("metadata", {}), dict) else {}
+            else:
+                text = str(content)
+                meta = {}
+            author = meta.get("role") or "user"
             memories.append(
                 MemoryEntry(
-                    author="user",
-                    content=types.Content(parts=[types.Part(text=text)], role="user"),
+                    author=author,
+                    content=types.Content(parts=[types.Part(text=text)], role=author if author in ("user", "assistant") else "user"),
                     timestamp=row.get("created_at"),
                 )
             )

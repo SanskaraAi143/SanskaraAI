@@ -26,3 +26,4 @@ google-generativeai
 supabase
 aiohttp
 pillow
+sentence-transformers

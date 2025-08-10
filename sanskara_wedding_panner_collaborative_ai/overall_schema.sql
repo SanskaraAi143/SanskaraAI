@@ -2,6 +2,7 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS btree_gin;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS vector;
 
 -- Helper Function for updated_at columns
 CREATE OR REPLACE FUNCTION trigger_set_timestamp()
@@ -73,7 +74,8 @@ CREATE TABLE workflows (
     status VARCHAR(50) NOT NULL DEFAULT 'not_started', -- 'not_started', 'in_progress', 'paused', 'awaiting_feedback', 'completed', 'failed'
     context_summary JSONB, -- Stores key decisions and IDs to re-prime the agent's context
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (wedding_id, workflow_name)
 );
 
 CREATE INDEX idx_workflows_wedding_id_status ON workflows (wedding_id, status);
@@ -97,7 +99,8 @@ CREATE TABLE tasks (
     status VARCHAR(20) NOT NULL DEFAULT 'No Status',
     lead_party VARCHAR(50), -- 'bride_side', 'groom_side', 'couple'
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (wedding_id, title)
 );
 CREATE INDEX idx_task_wedding_id_status ON tasks (wedding_id, is_complete);
 
@@ -148,7 +151,8 @@ CREATE TABLE budget_items (
     status VARCHAR(50) DEFAULT 'Pending',
     contribution_by VARCHAR(50), -- 'bride_side', 'groom_side', 'shared'
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (wedding_id, item_name, category)
 );
 CREATE INDEX idx_budget_item_wedding_id ON budget_items (wedding_id);
 
@@ -205,10 +209,16 @@ CREATE TABLE mood_board_items (
     image_url TEXT NOT NULL,
     note TEXT,
     category VARCHAR(100) DEFAULT 'Decorations',
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    artifact_id UUID NULL REFERENCES image_artifacts(artifact_id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_mood_board_item_board_id ON mood_board_items (mood_board_id);
--- No updated_at for mood_board_items typically, but add if needed
+CREATE INDEX idx_mood_board_items_artifact_id ON mood_board_items (artifact_id);
+DROP TRIGGER IF EXISTS set_mood_board_items_updated_at ON mood_board_items;
+CREATE TRIGGER set_mood_board_items_updated_at
+BEFORE UPDATE ON mood_board_items
+FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
 
 
 -- Timeline Events Table
@@ -232,21 +242,26 @@ FOR EACH ROW
 EXECUTE FUNCTION trigger_set_timestamp();
 
 
--- Chat Sessions Table
+-- Chat Sessions Table (updated to include adk_session_id, final_summary, updated_at)
 CREATE TABLE chat_sessions (
     session_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     wedding_id UUID NOT NULL REFERENCES weddings(wedding_id) ON DELETE CASCADE,
+    adk_session_id UUID NULL, -- Maps to live ADK session identifier
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     last_updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    summary JSONB NULL
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    summary JSONB NULL,              -- (Legacy / optional structured summary)
+    final_summary TEXT NULL          -- (LLM generated compact summary stored also in memories)
 );
 CREATE INDEX idx_chat_sessions_wedding_id ON chat_sessions (wedding_id);
 CREATE INDEX idx_chat_sessions_summary_gin ON chat_sessions USING GIN (summary);
+CREATE INDEX idx_chat_sessions_adk_session_id ON chat_sessions (adk_session_id);
 
+DROP TRIGGER IF EXISTS set_chat_sessions_updated_at ON chat_sessions;
 CREATE TRIGGER set_chat_sessions_updated_at
 BEFORE UPDATE ON chat_sessions
 FOR EACH ROW
-EXECUTE FUNCTION trigger_set_timestamp(); -- Assuming last_updated_at should auto-update
+EXECUTE FUNCTION trigger_set_timestamp();
 
 
 -- Chat Messages Table
@@ -609,3 +624,37 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
 AFTER INSERT ON auth.users
 FOR EACH ROW EXECUTE PROCEDURE public.handle_new_auth_user();
+
+-- Add Image Artifacts table (supports generated / uploaded images + metadata)
+CREATE TABLE IF NOT EXISTS image_artifacts (
+    artifact_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    wedding_id UUID NOT NULL REFERENCES weddings(wedding_id) ON DELETE CASCADE,
+    artifact_filename TEXT NOT NULL,
+    supabase_url TEXT NOT NULL,
+    generation_prompt TEXT NULL,
+    image_type VARCHAR(30) NOT NULL DEFAULT 'generated', -- generated | uploaded | external
+    metadata JSONB NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_image_artifacts_wedding_id ON image_artifacts (wedding_id);
+CREATE INDEX IF NOT EXISTS idx_image_artifacts_type ON image_artifacts (image_type);
+DROP TRIGGER IF EXISTS set_image_artifacts_updated_at ON image_artifacts;
+CREATE TRIGGER set_image_artifacts_updated_at
+BEFORE UPDATE ON image_artifacts
+FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
+
+-- Semantic Memories (pgvector) updated for 1024-dim model static-retrieval-mrl-en-v1
+CREATE TABLE IF NOT EXISTS memories (
+  memory_id   uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  app_name    text        NOT NULL,
+  user_id     text        NOT NULL,          -- using wedding_id grouping
+  content     jsonb       NOT NULL,          -- {"text": "..", "metadata": {...}}
+  embedding   vector(1024) NOT NULL,         -- updated to 1024 dims
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_memories_app_user ON memories(app_name, user_id);
+CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories (created_at DESC);
+-- (Optional ANN index; may require re-create if dimension changed from previous 1536)
+DROP INDEX IF EXISTS idx_memories_embedding_ivfflat;
+CREATE INDEX idx_memories_embedding_ivfflat ON memories USING ivfflat (embedding vector_l2_ops) WITH (lists = 100);

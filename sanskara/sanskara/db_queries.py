@@ -485,8 +485,24 @@ def get_chat_sessions_by_wedding_id_query(wedding_id: str) -> str:
 def update_chat_session_summary_query(session_id: str, summary: Dict[str, Any]) -> str:
     return f"""
         UPDATE chat_sessions
-        SET summary = '{summary}'::jsonb,
+        SET summary = '{json.dumps(summary)}'::jsonb,
             last_updated_at = NOW()
+        WHERE session_id = '{session_id}';
+    """
+
+def update_chat_session_adk_session_id_query(session_id: str, adk_session_id: str) -> str:
+    return f"""
+        UPDATE chat_sessions
+        SET adk_session_id = '{adk_session_id}', last_updated_at = NOW()
+        WHERE session_id = '{session_id}';
+    """
+
+def update_chat_session_final_summary_query(session_id: str, final_summary: str) -> str:
+    return f"""
+        UPDATE chat_sessions
+        SET final_summary = $$ {final_summary} $$,
+            last_updated_at = NOW(),
+            updated_at = NOW()
         WHERE session_id = '{session_id}';
     """
 
@@ -779,4 +795,63 @@ def get_mood_board_stats_query(wedding_id: str) -> str:
         WHERE mb.wedding_id = '{wedding_id}'
         GROUP BY mb.mood_board_id, mb.name, mb.created_at
         ORDER BY mb.created_at DESC;
+    """
+
+def get_latest_chat_session_id_by_wedding_id_query(wedding_id: str) -> str:
+    """Get the most recent chat session_id for a wedding."""
+    return f"""
+        SELECT session_id
+        FROM chat_sessions
+        WHERE wedding_id = '{wedding_id}'
+        ORDER BY last_updated_at DESC NULLS LAST, created_at DESC
+        LIMIT 1;
+    """
+
+
+def get_recent_chat_messages_by_session_query(session_id: str, limit: int = 6) -> str:
+    """Get recent chat messages for a session_id (schema: sender_type, content jsonb, timestamp).
+    We extract text from content->>'text' for convenience.
+    """
+    return f"""
+        SELECT sender_type, content->>'text' AS text, timestamp
+        FROM chat_messages
+        WHERE session_id = '{session_id}'
+        ORDER BY timestamp DESC
+        LIMIT {limit};
+    """
+
+# New: Chat message insert + session timestamp update (updated for actual schema)
+
+def create_chat_message_query(
+    session_id: str,
+    sender_type: str,
+    text: str,
+    sender_name: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Insert chat message using actual schema. Stores text + optional metadata inside content jsonb.
+    Table columns: (message_id uuid default, session_id uuid, sender_type varchar, sender_name varchar, content jsonb, timestamp timestamptz default now())
+    """
+    # Build content JSON
+    payload: Dict[str, Any] = {"text": text}
+    if metadata:
+        payload["metadata"] = metadata
+    import json as _json
+    content_json = _json.dumps(payload).replace("'", "''")
+    sender_name_val = sender_name or sender_type
+    return f"""
+        INSERT INTO chat_messages (session_id, sender_type, sender_name, content)
+        VALUES ('{session_id}', '{sender_type}', '{sender_name_val}', '{content_json}'::jsonb)
+        RETURNING message_id;
+    """
+
+
+def update_chat_session_last_updated_at_query(session_id: str) -> str:
+    """
+    Touches chat_sessions.last_updated_at to NOW(). Useful if triggers are absent.
+    """
+    return f"""
+        UPDATE chat_sessions
+        SET last_updated_at = NOW()
+        WHERE session_id = '{session_id}';
     """
