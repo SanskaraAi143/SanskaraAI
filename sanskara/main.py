@@ -3,11 +3,28 @@ from dotenv import load_dotenv
 import os
 from arize.otel import register
 
-tracer_provider = register(
-    space_id = "U3BhY2U6MjUwMTU6WXRpdQ==",
-    api_key = "ak-be807e9a-bf62-4c4e-be43-d43e2ffe9994-EBipEIOmIVqizJFBl_aulryy4qZWG4Li",
-    project_name = "SanskaraAI", # name this to whatever you would like
-)
+# Load env first so we can read ARIZE_* variables
+load_dotenv()
+
+ARIZE_SPACE_ID = os.getenv("ARIZE_SPACE_ID")
+ARIZE_API_KEY = os.getenv("ARIZE_API_KEY")
+ARIZE_PROJECT_NAME = os.getenv("ARIZE_PROJECT_NAME", "SanskaraAI")
+
+tracer_provider = None
+if ARIZE_SPACE_ID and ARIZE_API_KEY:
+    try:
+        tracer_provider = register(
+            space_id=ARIZE_SPACE_ID,
+            api_key=ARIZE_API_KEY,
+            project_name=ARIZE_PROJECT_NAME,
+        )
+    except Exception as e:  # pragma: no cover
+        # Fallback: continue without tracing if registration fails
+        from logger import json_logger as _tmp_logger
+        _tmp_logger.warning(f"Arize tracing disabled (registration failed): {e}")
+else:
+    from logger import json_logger as _tmp_logger
+    _tmp_logger.warning("Arize tracing disabled (ARIZE_SPACE_ID / ARIZE_API_KEY not set)")
 
 # Import and configure the automatic instrumentor from OpenInference
 from openinference.instrumentation.google_adk import GoogleADKInstrumentor
@@ -24,7 +41,6 @@ from api.onboarding.routes import onboarding_router
 from api.weddings.routes import weddings_router
 from agent_websocket.service import websocket_endpoint
 
-load_dotenv()
 import logging
 
 logging.basicConfig(

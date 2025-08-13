@@ -30,3 +30,4 @@ sentence-transformers
 # observability
 openinference-instrumentation-google-adk
 arize-otel
+nest_asyncio
