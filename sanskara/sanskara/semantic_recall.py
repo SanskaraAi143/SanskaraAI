@@ -20,7 +20,7 @@ async def _fallback_fetch_latest_memories(*, wedding_id: str, top_k: int) -> Lis
     """Fallback: pull latest memories for this wedding without vector search (summary entries first)."""
     try:
         from sanskara.helpers import execute_supabase_sql, sql_quote_value
-        app_name = os.getenv("SANSKARA_APP_NAME", "SanskaraAI")
+        app_name = os.getenv("SANSKARA_APP_NAME", "sanskara")
         # Prefer rows whose content.metadata.type == 'session_final_summary'
         sql = (
             "SELECT content, created_at "
@@ -72,7 +72,7 @@ async def semantic_search_facts(
         if 'SupabaseMemoryService' in locals() and SupabaseMemoryService is not None:
             try:
                 svc = SupabaseMemoryService()
-                app_name = os.getenv("SANSKARA_APP_NAME", "SanskaraAI")
+                app_name = os.getenv("SANSKARA_APP_NAME", "sanskara")
                 resp = await svc.search_memory(app_name=app_name, user_id=wedding_id, query=query)
                 # Filter to summaries only
                 filtered = []

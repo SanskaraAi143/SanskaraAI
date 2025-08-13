@@ -2,10 +2,33 @@ import json
 from typing import Optional, Dict, Any, List
 from google.genai import types
 from google.adk.models import LlmResponse, LlmRequest
-from google.adk.agents.callback_context import CallbackContext
+from sanskara.adk_artifacts import artifact_service, get_artifact_metadata, find_session_artifacts_by_filenames, list_all_session_artifacts, get_latest_session_for_user
+import os, base64
+from google.adk.tools.tool_context import ToolContext
 
 from sanskara.helpers import execute_supabase_sql
 from logger import json_logger as logger # Import the custom JSON logger
+
+# Restrict exported symbols so deprecated names (e.g. list_artifacts_for_current_session) are NOT auto-exposed
+__all__ = [
+    "get_wedding_context",
+    "get_active_workflows",
+    "get_tasks_for_wedding",
+    "update_workflow_status",
+    "create_workflow",
+    "upsert_workflow",
+    "update_task_details",
+    "create_task",
+    "upsert_task",
+    "get_task_feedback",
+    "get_task_approvals",
+    "get_complete_wedding_context",
+    "resolve_artifact_filenames",
+    "load_artifact_content",
+    "list_user_artifacts",
+    "list_user_files_py",
+    # Intentionally excluding deprecated wrappers
+]
 
 async def get_wedding_context(wedding_id: str) -> dict:
     """
@@ -483,6 +506,172 @@ async def get_complete_wedding_context(wedding_id: str) -> Dict[str, Any]:
             "active_workflows": [],
             "all_tasks": []
         }
+
+async def resolve_artifact_filenames(filenames: List[str], session_id: str, user_id: str, app_name: Optional[str] = None, alternate_user_ids: Optional[List[str]] = None, alternate_session_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Resolve user-visible filenames to internal artifact versions and metadata for the current session.
+    Enhanced: detects swapped arguments (user_id passed as name, session_id passed as user UUID) and auto-recovers.
+    """
+    app_name = app_name or os.getenv("SANSKARA_APP_NAME", "sanskara")
+    try:
+        clean_names = [f.strip() for f in filenames if f and f.strip()]
+        logger.debug({
+            "event": "resolve_artifact_filenames:start",
+            "input_filenames": filenames,
+            "clean_filenames": clean_names,
+            "app_name": app_name,
+            "user_id": user_id,
+            "session_id": session_id,
+        })
+        if not clean_names:
+            return {"status": "success", "resolved": [], "note": "no_valid_filenames"}
+        matches = find_session_artifacts_by_filenames(app_name, user_id, session_id, clean_names)  # primary
+        attempted = [(user_id, session_id, "primary")]
+        index_snapshot = list_all_session_artifacts(app_name)
+        existing_users = {x['user_id'] for x in index_snapshot}
+        existing_sessions = {x['session_id'] for x in index_snapshot}
+        # If no matches, attempt fallback heuristics
+        if not matches:
+            import re
+            uuid_re = re.compile(r"^[0-9a-fA-F-]{30,36}$")
+            # Heuristic 1: Swapped values (session_id actually user_uuid, user_id is display/email/name)
+            if uuid_re.match(session_id) and user_id not in existing_users and session_id in existing_users:
+                derived_user = session_id
+                # Try latest session for that user first
+                latest_sess = get_latest_session_for_user(app_name, derived_user)
+                if latest_sess:
+                    m = find_session_artifacts_by_filenames(app_name, derived_user, latest_sess, clean_names)
+                    attempted.append((derived_user, latest_sess, "swap_latest_session"))
+                    if m:
+                        matches = m
+                        user_id = derived_user
+                        session_id = latest_sess
+                # If still none, brute force that user's sessions from snapshot
+                if not matches:
+                    user_sessions = {x['session_id'] for x in index_snapshot if x['user_id'] == derived_user}
+                    for s in list(user_sessions)[:5]:
+                        m = find_session_artifacts_by_filenames(app_name, derived_user, s, clean_names)
+                        attempted.append((derived_user, s, "swap_scan"))
+                        if m:
+                            matches = m
+                            user_id = derived_user
+                            session_id = s
+                            break
+            # Heuristic 2: Try alternate provided lists
+            if not matches:
+                alt_users = alternate_user_ids or []
+                alt_sessions = alternate_session_ids or []
+                if not alt_users:
+                    # include all existing users (bounded)
+                    alt_users = list(existing_users)[:6]
+                if not alt_sessions:
+                    alt_sessions = list(existing_sessions)[:6]
+                for au in alt_users:
+                    for asess in alt_sessions:
+                        if (au, asess, "alt") in attempted:
+                            continue
+                        m = find_session_artifacts_by_filenames(app_name, au, asess, clean_names)
+                        attempted.append((au, asess, "alt"))
+                        if m:
+                            matches = m
+                            user_id = au
+                            session_id = asess
+                            break
+                    if matches:
+                        break
+        logger.debug({
+            "event": "resolve_artifact_filenames:result",
+            "requested": clean_names,
+            "resolved_count": len(matches),
+            "resolved_filenames": [m.get("filename") for m in matches],
+            "final_user_id": user_id,
+            "final_session_id": session_id,
+            "attempts": attempted,
+        })
+        if not matches:
+            logger.debug({
+                "event": "resolve_artifact_filenames:empty_final",
+                "available_index_size": len(index_snapshot),
+                "users_indexed": list(existing_users),
+                "sessions_indexed": list(existing_sessions),
+            })
+        return {"status": "success", "resolved": matches, "final_user_id": user_id, "final_session_id": session_id}
+    except Exception as e:
+        logger.error(f"resolve_artifact_filenames failed: {e}", exc_info=True)
+        return {"status": "error", "error": str(e)}
+
+async def load_artifact_content(filename: str , tool_context: ToolContext) -> Dict[str, Any]:
+    logger.debug({
+        "event": "load_artifact_content:start",
+        "filename" : filename,
+    })
+    try:
+        art = await tool_context.load_artifact(filename)
+    except Exception as e:
+        logger.error(f"load_artifact_content load failed: {e}")
+        return {"status": "error", "error": f"load_failed: {e}"}
+    return {
+        "status": "success",
+        "filename": filename,
+        "mime_type": art.inline_data.mime_type,
+        "data": art.inline_data.data
+    }
+
+# --- Artifact Tools Reimplementation (explicit user_id & session_id like working curl endpoints) ---
+async def list_user_artifacts(user_id: str, session_id: str, app_name: Optional[str] = None, limit: int = 25) -> Dict[str, Any]:
+    """List artifacts for a given user & session (explicit identifiers required, mirrors /artifacts/list).
+    Returns: {status, artifacts:[{filename, version, mime_type, caption, auto_summary}]}
+
+    IMPORTANT:
+    - This replaces the deprecated list_artifacts_for_current_session.
+    - Always pass explicit user_id and session_id taken from state (e.g. db_chat_session_id / current_user_id).
+    - Never guess IDs; if unavailable, ask user to perform an action that provides them (or request re-upload).
+    """
+    app = app_name or os.getenv("SANSKARA_APP_NAME", "sanskara")
+    try:
+        from sanskara.adk_artifacts import list_session_artifacts
+        items = await list_session_artifacts(app, user_id, session_id)[:limit]
+        return {"status": "success", "artifacts": items, "user_id": user_id, "session_id": session_id}
+    except Exception as e:
+        logger.error(f"list_user_artifacts failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+# Removed deprecated list_artifacts_for_current_session to prevent the model from auto-calling it.
+# If calls appear in logs, they come from cached prompt memory; reinforce prompt to ONLY use list_user_artifacts.
+
+# Keep resolve_artifacts stub for backward compatibility but ensure it clearly directs usage.
+async def resolve_artifacts(filenames: List[str]) -> Dict[str, Any]:  # legacy name
+    return {"status": "error", "error": "deprecated_use_list_user_artifacts_then_load_artifact_content"}
+
+async def list_user_files_py(tool_context: ToolContext) -> str:  # ToolContext typed indirectly to avoid import cycles
+    """List available artifact filenames for the current session via ADK ToolContext.
+
+    Returns a human-readable bullet list or a short status string.
+    This is the preferred lightweight listing tool for the orchestrator.
+    For programmatic version metadata use list_user_artifacts(user_id, session_id).
+    """
+    try:
+        available_files = await tool_context.list_artifacts()
+        logger.debug({
+            "event": "list_user_files_py",
+            "available_files_count": len(available_files),
+            "available_files": available_files,
+        })
+         # If no files, return a simple message
+         # If files, format them as a bullet list
+         # This is for human-readable output in orchestrator responses
+         # Not intended for programmatic use (use list_user_artifacts instead)
+         # This is a tool for the orchestrator to quickly check available files
+         # without needing to know user_id/session_id explicitly.
+        if not available_files:
+            return "You have no saved artifacts."
+        file_list_str = "\n".join([f"- {fname}" for fname in available_files])
+        return f"Here are your available artifacts:\n{file_list_str}"
+    except ValueError as e:
+        logger.error(f"list_user_files_py ValueError: {e}")
+        return "Error: Could not list artifacts (service not configured)."
+    except Exception as e:
+        logger.error(f"list_user_files_py unexpected error: {e}", exc_info=True)
+        return "Error: An unexpected issue occurred while listing artifacts."
 
 if __name__ == "__main__":
     # Example usage

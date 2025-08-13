@@ -19,11 +19,12 @@ from sanskara.agent import root_agent
 from sanskara.tools import get_wedding_context, get_active_workflows, get_tasks_for_wedding
 from sanskara.helpers import execute_supabase_sql
 from config import VOICE_NAME, SEND_SAMPLE_RATE, SESSION_SERVICE_URI
+from sanskara.adk_artifacts import artifact_service
 
 
 # Initialize session service, artifact service, and agent once for the application
 session_service = DatabaseSessionService(db_url=SESSION_SERVICE_URI)
-artifact_service = InMemoryArtifactService()
+# artifact_service = InMemoryArtifactService()  # replaced by shared singleton
 agent_instance = root_agent # Use the RootAgent as the main agent
 
 async def websocket_endpoint(websocket: WebSocket):
@@ -40,13 +41,40 @@ async def websocket_endpoint(websocket: WebSocket):
     user_id = query_params.get("user_id", "default_user_id") # Get user_id from query params
 
     logger.info(f"Client connected with user_id: {user_id}")
-    await websocket.send_json({"type": "ready"})
-
+    
     # Create session for the ADK runner
     session = await session_service.create_session(
-        app_name="multimodal_assistant",
+        app_name="sanskara",
         user_id=user_id,
     )
+    # Send the ADK session identifier to the client for future artifact & tool calls
+    try:
+        logger.info(f"Session object repr: {session}")
+        try:
+            logger.info(f"Session dir: {dir(session)}")
+        except Exception:
+            pass
+        session_handle = (
+            getattr(session, "session_id", None)
+            or getattr(session, "handle", None)
+            or getattr(session, "id", None)
+        )
+        if not session_handle:
+            import uuid as _uuid
+            session_handle = f"sess-{_uuid.uuid4().hex[:8]}"
+            logger.warning("Generated synthetic session handle (none provided by ADK)")
+        session.state["adk_session_id"] = session_handle
+        session.state.setdefault("recent_artifacts", [])  # prevent KeyError in prompt templating
+        await websocket.send_json({"type": "session", "session_id": session_handle})
+        logger.info(f"Sent session id to client: {session_handle}")
+    except Exception as e:
+        logger.error(f"Failed to emit session id to client: {e}")
+
+    # Always send ready after session announcement
+    try:
+        await websocket.send_json({"type": "ready"})
+    except Exception as e:
+        logger.error(f"Failed to send ready message: {e}")
 
     # Fetch wedding_id from user_id and prime context
     wedding_id = None
@@ -81,7 +109,7 @@ async def websocket_endpoint(websocket: WebSocket):
         return # Exit the handler if context priming fails
 
     runner = Runner(
-        app_name="multimodal_assistant",
+        app_name="sanskara",
         agent=agent_instance,
         session_service=session_service,
         artifact_service=artifact_service,

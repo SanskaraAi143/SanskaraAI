@@ -26,6 +26,10 @@ from sanskara.tools import (
     # get_task_feedback, get_task_approvals, get_complete_wedding_context
     upsert_workflow,
     upsert_task,
+    load_artifact_content,
+    # resolve_artifacts,  # deprecated
+    list_user_artifacts,
+    list_user_files_py,
 )
 from sanskara.context_manager import context_manager
 # Removed context_debugger import (legacy)
@@ -59,7 +63,9 @@ task_and_timeline_tool = agent_tool.AgentTool(agent=task_and_timeline_agent)
 async def orchestrator_before_agent_callback(
     callback_context: CallbackContext
 ) -> Optional[LlmResponse]:
-    """This function is called before the model is called."""
+    """This function is called before the model is called.
+    Artifact listing removed per request; artifacts will be accessed on-demand via tools only.
+    """
     wedding_id = callback_context.state.get("current_wedding_id")
     user_id = callback_context.state.get("current_user_id")
     
@@ -69,17 +75,15 @@ async def orchestrator_before_agent_callback(
         agent_name="OrchestratorAgent",
     ):
         logger.debug(
-            "Entering orchestrator_before_agent_callback with state:"
+            "Entering orchestrator_before_agent_callback with state:"\
             f"user content {callback_context.user_content}"
         )
 
         if not wedding_id:
             logger.warning(
-                "No wedding_id found in session state. Cannot prime"
+                "No wedding_id found in session state. Cannot prime"\
                 " OrchestratorAgent context."
             )
-            # TODO need to implement a fallback or error handling here
-            # set as not implemented for each key
             callback_context.state.update(
                 {
                     "wedding_data": None,
@@ -87,7 +91,9 @@ async def orchestrator_before_agent_callback(
                     "all_tasks": None,
                     "current_wedding_id": None,
                     "current_user_id": user_id,
-                    "current_user_role": "bride"
+                    "current_user_role": "bride",
+                    # Keep placeholder so prompt variable exists but do NOT pre-populate
+                    "recent_artifacts": [],
                 }
             )
             return None
@@ -141,7 +147,7 @@ async def orchestrator_before_agent_callback(
             except Exception as e:
                 logger.warning(f"Token guard capping failed: {e}")
             
-            # Ensure prompt-referenced keys exist with safe defaults
+            # Ensure prompt-referenced keys exist with safe defaults (artifact list intentionally empty)
             try:
                 default_keys: Dict[str, Any] = {
                     "cultural_context": {},
@@ -149,6 +155,7 @@ async def orchestrator_before_agent_callback(
                     "collaboration_context": {},
                     "calendar_events": [],
                     "all_tasks": [],
+                    "recent_artifacts": [],  # intentionally NOT populated here
                 }
                 for k, v in default_keys.items():
                     context_data.setdefault(k, v)
@@ -177,7 +184,6 @@ async def orchestrator_before_agent_callback(
                     # Load last K recent messages for this session
                     latest_session_id = latest.get("session_id")
                     if latest_session_id:
-                        # Expose in state for downstream persistence of assistant turns
                         try:
                             callback_context.state["db_chat_session_id"] = latest_session_id
                         except Exception:
@@ -186,9 +192,7 @@ async def orchestrator_before_agent_callback(
                         msgs_sql = get_recent_chat_messages_by_session_query(latest_session_id, limit=k_turns * 2)
                         msgs_resp = await execute_supabase_sql(msgs_sql)
                         if msgs_resp.get("status") == "success" and msgs_resp.get("data"):
-                            # Reverse to chronological order
                             rows = list(reversed(msgs_resp["data"]))
-                            # Normalize into {role, content, created_at}
                             recent_messages = [
                                 {
                                     "role": r.get("role"),
@@ -215,14 +219,13 @@ async def orchestrator_before_agent_callback(
                 logger.warning(f"Conversation summary load failed: {mem_err}")
                 conversation_summary = None
             
-            # Attach memory fields to context_data so prompt replacement finds them
             context_data["conversation_summary"] = conversation_summary or ""
             context_data["recent_messages"] = recent_messages or []
-            
+
             # Semantic recall using Supabase memory
             semantic = await semantic_search_facts(
                 wedding_id=wedding_id,
-                session_id=None,  # TODO: wire actual session_id from ADK when available
+                session_id=None,
                 query=user_message or "",
                 top_k=5,
             )
@@ -245,12 +248,10 @@ async def orchestrator_before_agent_callback(
                     ),
                     meta=meta,
                 )
-                # Store single source of truth
                 callback_context.state["orchestrator_context"] = structured_ctx.to_state()
             except Exception as build_err:
                 logger.warning(f"Failed to build OrchestratorContext: {build_err}")
             
-            # Also expose semantic_memory at top level for prompt `{semantic_memory.facts}` usage
             try:
                 callback_context.state["semantic_memory"] = {
                     "facts": semantic.get("facts", []),
@@ -259,10 +260,6 @@ async def orchestrator_before_agent_callback(
             except Exception:
                 pass
             
-            # Debug context efficiency (optional - can be disabled in production)
-            # context_debugger.log_context_request(context_request, context_data)
-            
-            # Check wedding status for Orchestrator activation
             wedding_data = context_data.get("wedding_data", {})
             if wedding_data and wedding_data.get("status") != "active":
                 logger.info(f"Wedding {wedding_id} is not active (status: {wedding_data.get('status')}). Orchestrator will not process requests.")
@@ -276,7 +273,6 @@ async def orchestrator_before_agent_callback(
                 f"Context keys: {list(context_data.keys())}"
             )
 
-            # Store data in session state for the agent to access (back-compat keys)
             callback_context.state.update(context_data)
 
             logger.info(
@@ -286,7 +282,7 @@ async def orchestrator_before_agent_callback(
 
         except Exception as e:
             logger.error(
-                "Error in orchestrator_before_agent_callback for wedding"
+                "Error in orchestrator_before_agent_callback for wedding"\
                 f" {wedding_id}: {e}",
                 exc_info=True,
             )
@@ -393,7 +389,7 @@ async def orchestrator_after_agent_callback(
         #         if insert_resp.get("status") == "success" and insert_resp.get("data"):
         #             db_msg_id = insert_resp["data"][0].get("message_id")
         #         await svc.add_text_to_memory(
-        #             app_name=os.getenv("SANSKARA_APP_NAME", "SanskaraAI"),
+        #             app_name=os.getenv("SANSKARA_APP_NAME", "sanskara"),
         #             user_id=wedding_id,
         #             text=user_text,
         #             metadata={"session_id": session_id, "message_id": db_msg_id, **(metadata or {})},
@@ -488,8 +484,10 @@ orchestrator_agent = LlmAgent(
         budget_and_expense_agent_tool,
         ritual_and_cultural_agent_tool,
         creative_agent_tool,
-        #guest_and_communication_tool,
         task_and_timeline_tool,
+        load_artifact_content,
+        list_user_artifacts,
+        list_user_files_py,
     ],
     before_agent_callback= orchestrator_before_agent_callback,
     after_agent_callback= orchestrator_after_agent_callback,

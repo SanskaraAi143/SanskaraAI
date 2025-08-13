@@ -17,7 +17,11 @@ import uuid
 import os
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from fastapi import status
+from fastapi import status, UploadFile, File, Form, Depends
+from typing import Optional
+from sanskara.adk_artifacts import artifact_service, record_artifact_metadata, list_session_artifacts
+from google.genai import types as _genai_types
+
 # Get the directory where main.py is located
 AGENT_DIR = "./"
 # SESSION_SERVICE_URI is now constructed in config.py
@@ -193,3 +197,104 @@ async def check_supabase_db_health() -> HealthCheckResult:
     except Exception as e:
         logger.error(f"Supabase health check failed: {e}", exc_info=True)
         return HealthCheckResult(status="unavailable", message=f"Supabase health check failed: {e}")
+
+@app.post("/artifacts/upload", tags=["Artifacts"])
+async def upload_artifact(
+    user_id: str = Form(...),
+    session_id: str = Form(...),
+    file: UploadFile = File(...),
+    app_name: Optional[str] = Form(None),
+    caption: Optional[str] = Form(None),
+):
+    """Upload an artifact and store it via ADK ArtifactService only.
+    Requires explicit app_name/user_id/session_id to keep consistency with ADK expectations.
+    Returns the artifact version handle and basic metadata.
+    """
+    data = await file.read()
+    app_name = app_name or os.getenv("SANSKARA_APP_NAME", "sanskara")
+    part = _genai_types.Part.from_bytes(data=data, mime_type=file.content_type or "application/octet-stream")
+    artifact_version = None
+    try:
+        artifact_version = await artifact_service.save_artifact(  # type: ignore
+            app_name=app_name,
+            user_id=user_id,
+            session_id=session_id,
+            filename=file.filename,
+            artifact=part,
+        )
+        logger.info(f"Artifact saved with version {artifact_version} for user_id={user_id}, session_id={session_id}")
+    except Exception as e:  # pragma: no cover
+        logger.error(f"ADK save_artifact failed for {file.filename}: {e}")
+        return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
+
+    # Lightweight auto summary for text-like content (best-effort, avoid heavy model call here)
+    auto_summary = None
+    try:
+        if (file.content_type or "").startswith("text/"):
+            decoded = data.decode(errors="ignore")
+            snippet = decoded.strip().splitlines()[:8]
+            joined = " ".join(s.strip() for s in snippet)
+            auto_summary = (joined[:280] + "…") if len(joined) > 280 else joined
+    except Exception:
+        auto_summary = None
+
+    record_artifact_metadata(artifact_version, {
+        "filename": file.filename,
+        "caption": caption,
+        "auto_summary": auto_summary,
+        "mime_type": file.content_type or "application/octet-stream",
+        "size_bytes": len(data),
+        "session_id": session_id,
+        "user_id": user_id,
+        "app_name": app_name,
+    })
+
+    logger.info(f"Artifact uploaded filename={file.filename} size={len(data)} user_id={user_id} session_id={session_id} version={artifact_version}")
+    return {"status": "success", "artifact": {
+        "filename": file.filename,
+        "mime_type": file.content_type or "application/octet-stream",
+        "size_bytes": len(data),
+        "caption": caption,
+        "auto_summary": auto_summary,
+        "version": artifact_version,
+        "session_id": session_id,
+        "user_id": user_id,
+        "app_name": app_name,
+    }}
+
+@app.get("/artifacts/list", tags=["Artifacts"])
+async def list_artifacts(user_id: str, session_id: str, app_name: Optional[str] = None):
+    """List artifacts (filename + version + metadata) from in-memory session index."""
+    app_name = app_name or os.getenv("SANSKARA_APP_NAME", "sanskara")
+    items = await list_session_artifacts(app_name, user_id, session_id)
+    return {"status": "success", "artifacts": items}
+
+@app.get("/artifacts/content", tags=["Artifacts"])
+async def get_artifact_content(user_id: str, session_id: str, version: str, filename: str, app_name: Optional[str] = None):
+    """Fetch a single artifact's raw bytes (base64) via ADK ArtifactService."""
+    app_name = app_name or os.getenv("SANSKARA_APP_NAME", "sanskara")
+    try:
+        art = await artifact_service.load_artifact(  # type: ignore
+            app_name=app_name,
+            user_id=user_id,
+            session_id=session_id,
+            filename=filename,
+            version=int(version)
+        )
+        logger.debug(f"artifact content {art}")
+    except Exception as e:  # pragma: no cover
+        logger.error(f"ADK load_artifact failed: {e}")
+        return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
+    try:
+        import base64
+        # Attempt to extract raw bytes; fallback attributes included
+        data = getattr(art, "data", None) or getattr(art, "bytes", None) or getattr(getattr(art, "inline_data", None), "data", None)
+        b64 = base64.b64encode(data).decode("utf-8") if data else None
+        return {"status": "success", "artifact": {
+            "version": version,
+            "filename": getattr(art, "filename", None) or getattr(art, "name", None) or filename,
+            "mime_type": getattr(art, "mime_type", None) or getattr(art, "content_type", None),
+            "base64_content": b64,
+        }}
+    except Exception as e:  # pragma: no cover
+        return JSONResponse(status_code=500, content={"status": "error", "error": f"Decode failed: {e}"})

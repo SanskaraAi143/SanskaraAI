@@ -2,6 +2,7 @@
 """
 Simple Manual Test Client for Sanskara AI
 Quick and easy testing of the WebSocket functionality
+Updated to handle new 'session' message providing session_id for artifact operations.
 """
 
 import asyncio
@@ -9,126 +10,195 @@ import websockets
 import json
 import sys
 from datetime import datetime
+import os
+import mimetypes
+import uuid
+import pathlib
+import requests
 
 # Configuration
 WS_URL = "ws://localhost:8765/ws"
+API_BASE = "http://localhost:8000"  # REST API base for artifacts
 USER_ID = "fca04215-2af3-4a4e-bcfa-c27a4f54474c"
 
 class SimpleClient:
     def __init__(self):
         self.websocket = None
         self.connected = False
+        self.session_id = None  # ADK session id provided by server
+        self._listener_task = None
     
     def log(self, message):
         timestamp = datetime.now().strftime("%H:%M:%S")
         print(f"[{timestamp}] {message}")
     
     async def connect(self):
-        """Connect to the WebSocket server"""
+        """Connect to the WebSocket server and complete handshake (ready + optional session)."""
         try:
             ws_url_with_user = f"{WS_URL}?user_id={USER_ID}"
             self.log(f"Connecting to {ws_url_with_user}")
             self.websocket = await websockets.connect(ws_url_with_user)
-            # Expect an init first, then ready
-            first_msg = await self.websocket.recv()
-            try:
-                first_data = json.loads(first_msg)
-            except Exception:
-                first_data = {}
-            if first_data.get("type") == "init":
-                self.log("⏳ Initializing context...")
-                # Wait for ready
-                ready_message = await self.websocket.recv()
-                ready_data = json.loads(ready_message)
-            else:
-                ready_data = first_data
-            if ready_data.get("type") == "ready":
-                self.connected = True
-                self.log("✅ Connected successfully (context primed)!")
-                return True
-            else:
-                self.log(f"❌ Unexpected handshake messages: {first_data} then {ready_data}")
-                return False
+            # Loop until we receive 'ready'. Capture any 'session' message before/after.
+            while True:
+                msg = await self.websocket.recv()
+                try:
+                    data = json.loads(msg)
+                except Exception:
+                    data = {}
+                mtype = data.get("type")
+                if mtype == "session":
+                    self.session_id = data.get("session_id") or data.get("data")
+                    self.log(f"🆔 Session established: {self.session_id}")
+                elif mtype == "ready":
+                    self.connected = True
+                    if not self.session_id:
+                        self.log("⚠️ Ready received but no session id yet (server may have failed before sending session message)")
+                    self.log("✅ Connected (ready received).")
+                    break
+                else:
+                    self.log(f"📥 Pre-ready message: {data}")
+            return True
         except Exception as e:
             self.log(f"❌ Connection failed: {e}")
             return False
     
-    async def send_message(self, text):
-        """Send a text message"""
+    async def send_message(self, text: str):
+        """Send a text chat message."""
         if not self.connected or not self.websocket:
             self.log("❌ Not connected!")
             return
-        
         try:
-            message = {
-                "type": "text",
-                "data": text
-            }
-            await self.websocket.send(json.dumps(message))
+            await self.websocket.send(json.dumps({"type": "text", "data": text}))
             self.log(f"📤 Sent: {text}")
-            
         except Exception as e:
             self.log(f"❌ Failed to send message: {e}")
     
     async def listen_for_responses(self):
-        """Listen for responses from the server"""
+        """Listen for responses from the server (runs until connection closes)."""
         if not self.connected or not self.websocket:
             return
-        
         try:
             while True:
                 response = await self.websocket.recv()
-                response_data = json.loads(response)
-                
-                response_type = response_data.get("type")
-                
-                if response_type == "text":
-                    text = response_data.get("data", "")
+                try:
+                    data = json.loads(response)
+                except Exception:
+                    self.log(f"📥 Non-JSON message: {response}")
+                    continue
+                rtype = data.get("type")
+                if rtype == "text":
+                    text = data.get("data", "")
                     print(f"🤖 AI: {text}", end="", flush=True)
-                    
-                elif response_type == "turn_complete":
-                    print()  # New line after complete response
-                    self.log("✅ Turn complete")
-                    
-                elif response_type == "interrupted":
+                elif rtype == "turn_complete":
                     print()
-                    self.log(f"⏸️ Interrupted: {response_data.get('data', '')}")
-                    
-                elif response_type == "error":
-                    self.log(f"❌ Error: {response_data.get('data', 'Unknown error')}")
-                    
-                elif response_type == "session_id":
-                    self.log(f"🆔 Session ID: {response_data.get('data', '')}")
-                    
+                    self.log("✅ Turn complete")
+                elif rtype == "interrupted":
+                    print()
+                    self.log(f"⏸️ Interrupted: {data.get('data', '')}")
+                elif rtype == "error":
+                    self.log(f"❌ Error: {data.get('data', 'Unknown error')}")
+                elif rtype == "session":
+                    self.session_id = data.get("session_id") or data.get("data")
+                    self.log(f"🆔 Session updated: {self.session_id}")
+                elif rtype == "session_id":  # legacy
+                    self.session_id = data.get("data")
+                    self.log(f"🆔 (legacy) Session ID: {self.session_id}")
                 else:
-                    self.log(f"📥 Other message: {response_data}")
-                    
-        except websockets.exceptions.ConnectionClosed:
-            self.log("🔌 Connection closed by server")
+                    self.log(f"📥 Other message: {data}")
+        except websockets.exceptions.ConnectionClosedOK:
+            self.log("🔌 Connection closed gracefully by server")
+            self.connected = False
+        except websockets.exceptions.ConnectionClosed as e:
+            self.log(f"🔌 Connection closed unexpectedly by server: code={e.code}, reason={e.reason}")
             self.connected = False
         except Exception as e:
             self.log(f"❌ Error receiving messages: {e}")
             self.connected = False
     
     async def close(self):
-        """Close the connection"""
         if self.websocket:
             await self.websocket.close()
             self.connected = False
             self.log("🔌 Connection closed")
-
-async def run_quick_test():
-    """Run a quick automated test"""
-    client = SimpleClient()
     
+    # ---------------- Artifact helper methods (REST) -----------------
+    def upload_artifact(self, file_path: str, caption: str = None):
+        """Synchronous helper to upload an artifact via REST. Requires session_id."""
+        if not self.session_id:
+            self.log("❌ No session_id yet. Cannot upload.")
+            return
+        path = pathlib.Path(file_path)
+        if not path.exists():
+            self.log(f"❌ File not found: {file_path}")
+            return
+        url = f"{API_BASE}/artifacts/upload"
+        mime, _ = mimetypes.guess_type(str(path))
+        files = {"file": (path.name, path.read_bytes(), mime or "application/octet-stream")}
+        data = {"user_id": USER_ID, "session_id": self.session_id}
+        if caption:
+            data["caption"] = caption
+        try:
+            resp = requests.post(url, files=files, data=data, timeout=60)
+            if resp.ok:
+                js = resp.json()
+                version = js.get("artifact", {}).get("version")
+                self.log(f"📦 Uploaded artifact: {path.name} version={version}")
+            else:
+                self.log(f"❌ Upload failed {resp.status_code}: {resp.text}")
+        except Exception as e:
+            self.log(f"❌ Upload exception: {e}")
+    
+    def list_artifacts(self):
+        if not self.session_id:
+            self.log("❌ No session_id yet. Cannot list.")
+            return
+        url = f"{API_BASE}/artifacts/list"
+        params = {"user_id": USER_ID, "session_id": self.session_id}
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+            if resp.ok:
+                js = resp.json()
+                arts = js.get("artifacts", [])
+                if not arts:
+                    self.log("📭 No artifacts.")
+                else:
+                    self.log("📂 Artifacts:")
+                    for a in arts:
+                        self.log(f"  - {a.get('filename')} (version={a.get('version')}, mime={a.get('mime_type')})")
+            else:
+                self.log(f"❌ List failed {resp.status_code}: {resp.text}")
+        except Exception as e:
+            self.log(f"❌ List exception: {e}")
+
+    def fetch_artifact_content(self, version: str):
+        if not self.session_id:
+            self.log("❌ No session_id yet. Cannot fetch content.")
+            return
+        url = f"{API_BASE}/artifacts/content"
+        params = {"user_id": USER_ID, "session_id": self.session_id, "version": version}
+        try:
+            resp = requests.get(url, params=params, timeout=60)
+            if resp.ok:
+                js = resp.json().get("artifact", {})
+                size = len(js.get("base64_content") or "")
+                self.log(f"🧾 Content fetched for version={version} base64_len={size}")
+            else:
+                self.log(f"❌ Content fetch failed {resp.status_code}: {resp.text}")
+        except Exception as e:
+            self.log(f"❌ Content fetch exception: {e}")
+
+# ---------------- Quick Test Mode ----------------
+async def run_quick_test():
+    client = SimpleClient()
     print("🚀 Running Quick Test")
     print("=" * 50)
-    
-    # Connect
     if not await client.connect():
         return
-    
-    # Test messages
+    listen_task = asyncio.create_task(client.listen_for_responses())
+    # Wait a moment to ensure session id captured
+    await asyncio.sleep(1)
+    # Optional: list artifacts initially
+    client.list_artifacts()
     test_messages = [
         "Hi there!",
         "How is my wedding planning going?",
@@ -136,68 +206,65 @@ async def run_quick_test():
         "Any overdue tasks I should know about?",
         "Show me vendor recommendations for photography"
     ]
-    
     try:
-        # Start listening for responses
-        listen_task = asyncio.create_task(client.listen_for_responses())
-        
-        # Send test messages with delays
-        for i, message in enumerate(test_messages, 1):
+        for i, msg in enumerate(test_messages, 1):
             print(f"\n--- Test {i}/{len(test_messages)} ---")
-            await client.send_message(message)
-            await asyncio.sleep(3)  # Wait 3 seconds between messages
-        
-        # Wait a bit more for final responses
+            await client.send_message(msg)
+            await asyncio.sleep(3)
         await asyncio.sleep(5)
-        
-        # Cancel listening task
-        listen_task.cancel()
-        
-    except KeyboardInterrupt:
-        print("\n⏹️ Test interrupted by user")
     finally:
+        listen_task.cancel()
         await client.close()
 
+# ---------------- Interactive Chat Mode ----------------
 async def run_interactive_chat():
-    """Run interactive chat session"""
     client = SimpleClient()
-    
     print("💬 Interactive Chat Mode")
     print("=" * 50)
-    print("Type your messages and press Enter. Type 'quit' to exit.")
-    print("=" * 50)
-    
-    # Connect
+    print("Commands: /upload <path> [caption...] | /list | /content <version> | /session | /quit")
     if not await client.connect():
         return
-    
+    listen_task = asyncio.create_task(client.listen_for_responses())
+    loop = asyncio.get_event_loop()
     try:
-        # Start listening for responses
-        listen_task = asyncio.create_task(client.listen_for_responses())
-        
-        # Handle user input
         while client.connected:
             try:
-                user_input = await asyncio.get_event_loop().run_in_executor(
-                    None, input, "\n👤 You: "
-                )
-                
-                if user_input.lower() in ['quit', 'exit', 'q']:
-                    break
-                
-                if user_input.strip():
-                    await client.send_message(user_input)
-                
+                raw = await loop.run_in_executor(None, input, "\n👤 You: ")
             except (EOFError, KeyboardInterrupt):
                 break
-        
-        # Cancel listening task
-        listen_task.cancel()
-        
-    except Exception as e:
-        print(f"❌ Chat session error: {e}")
+            if not raw:
+                continue
+            if raw.lower() in {"/quit", "/exit", "quit", "exit", "q"}:
+                break
+            if raw.startswith("/session"):
+                client.log(f"Current session_id: {client.session_id}")
+                continue
+            if raw.startswith("/upload"):
+                parts = raw.split()
+                if len(parts) < 2:
+                    client.log("Usage: /upload <file_path> [caption...]")
+                    continue
+                file_path = parts[1]
+                caption = " ".join(parts[2:]) if len(parts) > 2 else None
+                client.upload_artifact(file_path, caption)
+                continue
+            if raw.startswith("/list"):
+                client.list_artifacts()
+                continue
+            if raw.startswith("/content"):
+                parts = raw.split()
+                if len(parts) != 2:
+                    client.log("Usage: /content <version>")
+                    continue
+                client.fetch_artifact_content(parts[1])
+                continue
+            # Normal chat
+            await client.send_message(raw)
     finally:
+        listen_task.cancel()
         await client.close()
+
+# ---------------- Entry Point ----------------
 
 def main():
     print("🎯 Sanskara AI Simple Test Client")
@@ -205,10 +272,8 @@ def main():
     print("1. Quick automated test")
     print("2. Interactive chat")
     print("3. Exit")
-    
     try:
         choice = input("\nEnter choice (1-3): ").strip()
-        
         if choice == "1":
             asyncio.run(run_quick_test())
         elif choice == "2":
@@ -219,7 +284,6 @@ def main():
         else:
             print("❌ Invalid choice. Please enter 1, 2, or 3.")
             return main()
-            
     except KeyboardInterrupt:
         print("\n👋 Goodbye!")
         sys.exit(0)

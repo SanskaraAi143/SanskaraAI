@@ -26,6 +26,7 @@ This README is an end‑to‑end guide: architecture, environment, setup, runnin
 18. Troubleshooting
 19. Roadmap / Future Enhancements
 20. License
+21. Contributing Guidelines
 
 ---
 ## 1. Vision & Core Value
@@ -102,7 +103,8 @@ Response policy & examples baked into `prompt.py` (Sections 1–6). Strict rules
 FastAPI app: `api/app.py`
 
 REST Endpoints (selected):
-- Health: `GET /health` → aggregated component checks (astra_db (optional), local_db, agentops, supabase)
+- Health: `GET /health` → aggregated component checks (local_db, agentops, supabase)
+    *   **Note on AstraDB:** While the `/health` endpoint has a placeholder for AstraDB, Supabase is currently the primary and fully supported data persistence option. AstraDB integration is a potential future enhancement.
 - Onboarding: `POST /onboarding/submit` (first or second partner), `GET /onboarding/partner-details?email=...`
 - Weddings: `GET /weddings/{weddingId}`, `PUT/PATCH /weddings/{weddingId}`
 
@@ -327,7 +329,60 @@ Planned:
 
 ---
 ## 20. License
-Specify project license (e.g., MIT / Apache-2.0). Add a LICENSE file at repository root.
+
+This project is currently unlicensed. We plan to add a `LICENSE` file (e.g., MIT or Apache-2.0) at the repository root in the near future to specify the terms of use and distribution.
+
+---
+## 21. Contributing Guidelines
+
+We welcome contributions to Sanskara AI! By contributing, you help us build a more robust and comprehensive wedding planning assistant. Please follow these guidelines to ensure a smooth and effective collaboration process.
+
+### How to Report Bugs
+
+If you find a bug, please open an issue on our GitHub repository. When reporting a bug, provide as much detail as possible:
+
+*   **Clear and concise description:** Explain the bug and its impact.
+*   **Steps to reproduce:** Provide numbered steps to reliably reproduce the issue.
+*   **Expected behavior:** Describe what you expected to happen.
+*   **Actual behavior:** Describe what actually happened, including any error messages or stack traces.
+*   **Environment:** Specify your operating system, Python version, and any relevant dependencies.
+
+### How to Suggest New Features
+
+We love new ideas! If you have a feature suggestion:
+
+*   Open an issue on GitHub.
+*   Clearly describe the feature, its purpose, and how it would benefit users.
+*   Explain any potential challenges or alternative approaches.
+
+### Code Style Guidelines
+
+To maintain code quality and consistency:
+
+*   **Python:** Adhere to [PEP 8](https://www.python.org/dev/peps/pep-0008/) conventions. We use `Black` for code formatting and `Flake8` for linting. Please run these tools before submitting a Pull Request:
+    ```bash
+    pip install black flake8
+    black .
+    flake8 .
+    ```
+*   **SQL:** Follow a consistent style for SQL queries, favoring readability and clarity.
+
+### Pull Request (PR) Process
+
+1.  **Fork the repository** and clone your fork.
+2.  **Create a new branch** from `main` for your changes: `git checkout -b feature/your-feature-name` or `git checkout -b bugfix/your-bug-description`.
+3.  **Implement your changes.** Ensure your code adheres to the [Code Style Guidelines](#code-style-guidelines).
+4.  **Write tests** for your changes. All new features and bug fixes should be accompanied by appropriate unit and/or integration tests.
+5.  **Run all tests** to ensure no existing functionality is broken: `cd sanskara && pytest -q`.
+6.  **Commit your changes** with clear and concise commit messages. Follow Conventional Commits if possible (e.g., `feat: Add new feature`, `fix: Resolve bug`).
+7.  **Push your branch** to your fork.
+8.  **Open a Pull Request** against the `main` branch of the original repository.
+    *   Provide a descriptive title and detailed explanation of your changes.
+    *   Reference any related issues (e.g., `Closes #123`).
+    *   Ensure all automated checks (CI/CD) pass.
+9.  **Address feedback** from reviewers promptly.
+
+Thank you for contributing!
 
 ---
 ## Quick Reference Cheat Sheet
@@ -338,5 +393,3 @@ Fetch Wedding: `GET /weddings/{id}`
 WebSocket: `ws://localhost:8765/ws?user_id=<uuid>`
 Tests: `pytest -q`
 Schema: `docs/design/overall_schema.sql`
-
-Contributions welcome – open issues / PRs for improvements.

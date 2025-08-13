@@ -105,7 +105,7 @@ async def _check_and_trigger_setup_agent(wedding_id: str, current_partner_email:
             "wedding_details": updated_details,
         })
         runner = Runner(
-            app_name="sanskara_wedding_planner",
+            app_name="sanskara",
             agent=setup_agent,
             session_service=session_service,
         )
