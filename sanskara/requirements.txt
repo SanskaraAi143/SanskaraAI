@@ -27,3 +27,6 @@ supabase
 aiohttp
 pillow
 sentence-transformers
+# observability
+openinference-instrumentation-google-adk
+arize-otel
