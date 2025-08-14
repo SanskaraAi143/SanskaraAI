@@ -60,7 +60,7 @@ async def bulk_create_tasks(tool_context: ToolContext, wedding_id: str, tasks_da
             due_date = task.get("due_date", None)
             priority = task.get("priority", "medium")
             category = task.get("category", "Uncategorized").replace("'", "''")
-            status = task.get("status", "not_started")
+            status = task.get("status", "No Status")
             lead_party = task.get("lead_party", "couple").replace("'", "''")
 
             # Handle None values and format properly

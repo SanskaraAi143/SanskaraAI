@@ -31,7 +31,7 @@ This is the most important step. You must create separate budget line items for 
     *   `category`: The corresponding workflow name.
     *   `amount`: An estimated amount, intelligently allocated from their stated budgets.
     *   `contribution_by`: `'bride_side'`, `'groom_side'`, or `'couple'`.
-    *   `status`: `'pending'`.
+    *   `status`: `'No Status/To Do/Doing/Done'`.
 
 **Step 5: Final Execution.**
 Once you have generated the complete lists for workflows, tasks, and budget items in your reasoning, call the necessary tools (`bulk_create_workflows`, `bulk_create_tasks`, `populate_initial_budget`) to save the entire plan to the database.
