@@ -32,7 +32,6 @@ from sanskara.tools import (
     get_overdue_tasks,
     get_shortlisted_vendors,
     get_task_and_workflow_summary,
-    get_current_datetime,
 )
 from sanskara.helpers import get_current_datetime # For fetching user and wedding info
 from logger import json_logger as logger # Import the custom JSON logger
@@ -70,15 +69,15 @@ async def orchestrator_before_agent_callback(
     wedding_id = callback_context.state.get("current_wedding_id")
 
     # If wedding_id is not in state, try to fetch it for the user.
-    if not wedding_id and user_id:
-        from sanskara.tools import get_active_wedding_for_user
-        logger.info(f"wedding_id not found in state for user {user_id}. Attempting to fetch.")
-        wedding_data = await get_active_wedding_for_user(user_id)
-        if not wedding_data.get("error"):
-            wedding_id = wedding_data.get("wedding_id")
-            callback_context.state["current_wedding_id"] = wedding_id
-            callback_context.state["wedding_data"] = wedding_data # Pass along the data
-            logger.info(f"Successfully fetched and set wedding_id: {wedding_id}")
+    #if not wedding_id and user_id:
+    from sanskara.tools import get_active_wedding_for_user
+    logger.info(f"wedding_id not found in state for user {user_id}. Attempting to fetch.")
+    wedding_data = await get_active_wedding_for_user(user_id)
+    if not wedding_data.get("error"):
+        wedding_id = wedding_data.get("wedding_id")
+        callback_context.state["current_wedding_id"] = wedding_id
+        callback_context.state["wedding_data"] = wedding_data # Pass along the data
+        logger.info(f"Successfully fetched and set wedding_id: {wedding_id}")
 
     with logger.contextualize(
         wedding_id=wedding_id,
