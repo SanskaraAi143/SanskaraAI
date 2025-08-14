@@ -11,8 +11,6 @@ from logger import json_logger as logger # Import the custom JSON logger
 
 # Restrict exported symbols so deprecated names (e.g. list_artifacts_for_current_session) are NOT auto-exposed
 __all__ = [
-    "get_wedding_context",
-    "get_active_workflows",
     "get_tasks_for_wedding",
     "update_workflow_status",
     "create_workflow",
@@ -23,58 +21,187 @@ __all__ = [
     "get_task_feedback",
     "get_task_approvals",
     "get_complete_wedding_context",
-    "get_active_wedding_for_user",
     "resolve_artifact_filenames",
     "load_artifact_content",
     "list_user_artifacts",
     "list_user_files_py",
-    # Intentionally excluding deprecated wrappers
+    "get_wedding_details",
+    "get_budget_summary",
+    "get_upcoming_deadlines",
+    "get_overdue_tasks",
+    "get_shortlisted_vendors",
+    "get_task_and_workflow_summary",
+    "get_active_wedding_for_user",
 ]
 
-async def get_wedding_context(wedding_id: str) -> dict:
+async def get_wedding_details(wedding_id: str) -> dict:
     """
-    Retrieves the high-level context of a specific wedding from the 'weddings' table.
-    This includes general wedding details, status, and any aggregated onboarding data summary.
+    Retrieves the primary details for a given wedding.
 
     Args:
         wedding_id: The UUID of the wedding.
 
     Returns:
-        A dictionary containing the wedding context, or an empty dictionary if not found.
+        A dictionary containing the wedding details.
     """
     sql = "SELECT * FROM weddings WHERE wedding_id = :wedding_id;"
-    params = {"wedding_id": wedding_id}
-    try:
-        result = await execute_supabase_sql(sql, params)
-        if result and result.get("status") == "success" and result.get("data"):
-            return result["data"][0]
-        else:
-            return {}
-    except Exception as e:
-        logger.error(f"Error fetching wedding context for {wedding_id}: {e}")
-        return {"error": str(e)}
+    result = await execute_supabase_sql(sql, {"wedding_id": wedding_id})
+    if result.get("status") == "success" and result.get("data"):
+        return result["data"][0]
+    return {"error": f"Could not retrieve details for wedding_id {wedding_id}"}
 
-async def get_active_workflows(wedding_id: str) -> List[Dict[str, Any]]:
+async def get_budget_summary(wedding_id: str) -> Dict[str, Any]:
     """
-    Retrieves all active or paused workflows associated with a specific wedding from the 'workflows' table.
+    Retrieves a summary of the budget for a given wedding.
 
     Args:
         wedding_id: The UUID of the wedding.
 
     Returns:
-        A list of dictionaries, each representing an active or paused workflow.
+        A dictionary containing the total budget, amount spent, and remaining budget.
     """
-    sql = "SELECT * FROM workflows WHERE wedding_id = :wedding_id AND status IN ('in_progress', 'paused', 'awaiting_feedback');"
-    params = {"wedding_id": wedding_id}
-    try:
-        result = await execute_supabase_sql(sql, params)
-        if result and result.get("status") == "success" and result.get("data"):
-            return result["data"]
-        else:
-            return []
-    except Exception as e:
-        logger.error(f"Error fetching active workflows for {wedding_id}: {e}")
-        return {"error": str(e)}
+    sql = """
+        SELECT
+            COALESCE(SUM(estimated_cost), 0) as total_budget,
+            COALESCE(SUM(actual_cost), 0) as total_spent,
+            COALESCE(SUM(estimated_cost) - SUM(actual_cost), 0) as remaining_budget
+         FROM budget_items WHERE wedding_id = :wedding_id;
+    """
+    result = await execute_supabase_sql(sql, {"wedding_id": wedding_id})
+    if result.get("status") == "success" and result.get("data"):
+        return result["data"][0]
+    return {"error": f"Could not retrieve budget summary for wedding_id {wedding_id}"}
+
+
+async def get_upcoming_deadlines(wedding_id: str, days: int = 30) -> List[Dict[str, Any]]:
+    """
+    Retrieves tasks with upcoming deadlines.
+
+    Args:
+        wedding_id: The UUID of the wedding.
+        days: The number of days to look ahead for deadlines.
+
+    Returns:
+        A list of tasks with upcoming deadlines.
+    """
+    from datetime import datetime, timedelta
+
+    today = datetime.now().date()
+    future_date = today + timedelta(days=days)
+
+    sql = """
+        SELECT task_id, title, due_date, priority, category
+        FROM tasks
+        WHERE wedding_id = :wedding_id
+        AND due_date BETWEEN :today AND :future_date
+        AND is_complete = false
+        ORDER BY due_date ASC;
+    """
+    params = {
+        "wedding_id": wedding_id,
+        "today": today.isoformat(),
+        "future_date": future_date.isoformat(),
+    }
+    result = await execute_supabase_sql(sql, params)
+    if result.get("status") == "success":
+        return result.get("data", [])
+    return [{"error": f"Could not retrieve upcoming deadlines for wedding_id {wedding_id}"}]
+
+
+async def get_overdue_tasks(wedding_id: str) -> List[Dict[str, Any]]:
+    """
+    Retrieves all overdue tasks for a given wedding.
+
+    Args:
+        wedding_id: The UUID of the wedding.
+
+    Returns:
+        A list of overdue tasks.
+    """
+    from datetime import datetime
+
+    sql = """
+        SELECT task_id, title, due_date, priority, category
+        FROM tasks
+        WHERE wedding_id = :wedding_id
+        AND due_date < :today
+        AND is_complete = false;
+    """
+    params = {"wedding_id": wedding_id, "today": datetime.now().date().isoformat()}
+    result = await execute_supabase_sql(sql, params)
+    if result.get("status") == "success":
+        return result.get("data", [])
+    return [{"error": f"Could not retrieve overdue tasks for wedding_id {wedding_id}"}]
+
+
+async def get_shortlisted_vendors(wedding_id: str) -> List[Dict[str, Any]]:
+    """
+    Retrieves the list of shortlisted vendors for a given wedding.
+
+    Args:
+        wedding_id: The UUID of the wedding.
+
+    Returns:
+        A list of shortlisted vendors.
+    """
+    sql = "SELECT * FROM user_shortlisted_vendors WHERE wedding_id = :wedding_id ORDER BY created_at DESC;"
+    result = await execute_supabase_sql(sql, {"wedding_id": wedding_id})
+    if result.get("status") == "success":
+        return result.get("data", [])
+    return [{"error": f"Could not retrieve shortlisted vendors for wedding_id {wedding_id}"}]
+
+async def get_task_and_workflow_summary(wedding_id: str) -> Dict[str, Any]:
+    """
+    Provides a summary of tasks and workflows for a given wedding.
+
+    Args:
+        wedding_id: The UUID of the wedding.
+
+    Returns:
+        A dictionary with counts of total, completed, and overdue tasks, and active workflows.
+    """
+    sql = """
+    WITH task_summary AS (
+        SELECT
+            COUNT(*) as total_tasks,
+            COUNT(*) FILTER (WHERE is_complete = true) as completed_tasks,
+            COUNT(*) FILTER (WHERE is_complete = false AND due_date < CURRENT_DATE) as overdue_tasks
+        FROM tasks
+        WHERE wedding_id = :wedding_id
+    ),
+    workflow_summary AS (
+        SELECT
+            COUNT(*) as active_workflows
+        FROM workflows
+        WHERE wedding_id = :wedding_id AND status IN ('in_progress', 'paused', 'awaiting_feedback')
+    )
+    SELECT
+        (SELECT total_tasks FROM task_summary) as total_tasks,
+        (SELECT completed_tasks FROM task_summary) as completed_tasks,
+        (SELECT overdue_tasks FROM task_summary) as overdue_tasks,
+        (SELECT active_workflows FROM workflow_summary) as active_workflows;
+    """
+    result = await execute_supabase_sql(sql, {"wedding_id": wedding_id})
+    if result.get("status") == "success" and result.get("data"):
+        return result["data"][0]
+    return {"error": "Could not retrieve task and workflow summary."}
+
+async def get_active_wedding_for_user(user_id: str) -> Dict[str, Any]:
+    """
+    Retrieves the active wedding for a given user.
+    Assumes a user has only one active wedding.
+    """
+    sql = """
+        SELECT w.*
+        FROM weddings w
+        JOIN wedding_members wm ON w.wedding_id = wm.wedding_id
+        WHERE wm.user_id = :user_id AND w.status = 'active'
+        LIMIT 1;
+    """
+    result = await execute_supabase_sql(sql, {"user_id": user_id})
+    if result.get("status") == "success" and result.get("data"):
+        return result["data"][0]
+    return {"error": f"No active wedding found for user_id {user_id}"}
 
 async def get_tasks_for_wedding(wedding_id: str, status: Optional[str] = None, lead_party: Optional[str] = None) -> List[Dict[str, Any]]:
     """
@@ -507,178 +634,6 @@ async def get_complete_wedding_context(wedding_id: str) -> Dict[str, Any]:
             "active_workflows": [],
             "all_tasks": []
         }
-
-async def get_wedding_details(wedding_id: str) -> Dict[str, Any]:
-    """
-    Retrieves the primary details for a given wedding.
-
-    Args:
-        wedding_id: The UUID of the wedding.
-
-    Returns:
-        A dictionary containing the wedding details.
-    """
-    sql = "SELECT * FROM weddings WHERE wedding_id = :wedding_id;"
-    result = await execute_supabase_sql(sql, {"wedding_id": wedding_id})
-    if result.get("status") == "success" and result.get("data"):
-        return result["data"][0]
-    return {"error": f"Could not retrieve details for wedding_id {wedding_id}"}
-
-
-async def get_budget_summary(wedding_id: str) -> Dict[str, Any]:
-    """
-    Retrieves a summary of the budget for a given wedding.
-
-    Args:
-        wedding_id: The UUID of the wedding.
-
-    Returns:
-        A dictionary containing the total budget, amount spent, and remaining budget.
-    """
-    sql = """
-        SELECT
-            COALESCE(SUM(estimated_cost), 0) as total_budget,
-            COALESCE(SUM(actual_cost), 0) as total_spent,
-            COALESCE(SUM(estimated_cost) - SUM(actual_cost), 0) as remaining_budget
-         FROM budget_items WHERE wedding_id = :wedding_id;
-    """
-    result = await execute_supabase_sql(sql, {"wedding_id": wedding_id})
-    if result.get("status") == "success" and result.get("data"):
-        return result["data"][0]
-    return {"error": f"Could not retrieve budget summary for wedding_id {wedding_id}"}
-
-
-async def get_upcoming_deadlines(wedding_id: str, days: int = 30) -> List[Dict[str, Any]]:
-    """
-    Retrieves tasks with upcoming deadlines.
-
-    Args:
-        wedding_id: The UUID of the wedding.
-        days: The number of days to look ahead for deadlines.
-
-    Returns:
-        A list of tasks with upcoming deadlines.
-    """
-    from datetime import datetime, timedelta
-
-    today = datetime.now().date()
-    future_date = today + timedelta(days=days)
-
-    sql = """
-        SELECT task_id, title, due_date, priority, category
-        FROM tasks
-        WHERE wedding_id = :wedding_id
-        AND due_date BETWEEN :today AND :future_date
-        AND is_complete = false
-        ORDER BY due_date ASC;
-    """
-    params = {
-        "wedding_id": wedding_id,
-        "today": today.isoformat(),
-        "future_date": future_date.isoformat(),
-    }
-    result = await execute_supabase_sql(sql, params)
-    if result.get("status") == "success":
-        return result.get("data", [])
-    return [{"error": f"Could not retrieve upcoming deadlines for wedding_id {wedding_id}"}]
-
-
-async def get_overdue_tasks(wedding_id: str) -> List[Dict[str, Any]]:
-    """
-    Retrieves all overdue tasks for a given wedding.
-
-    Args:
-        wedding_id: The UUID of the wedding.
-
-    Returns:
-        A list of overdue tasks.
-    """
-    from datetime import datetime
-
-    sql = """
-        SELECT task_id, title, due_date, priority, category
-        FROM tasks
-        WHERE wedding_id = :wedding_id
-        AND due_date < :today
-        AND is_complete = false;
-    """
-    params = {"wedding_id": wedding_id, "today": datetime.now().date().isoformat()}
-    result = await execute_supabase_sql(sql, params)
-    if result.get("status") == "success":
-        return result.get("data", [])
-    return [{"error": f"Could not retrieve overdue tasks for wedding_id {wedding_id}"}]
-
-
-async def get_shortlisted_vendors(wedding_id: str) -> List[Dict[str, Any]]:
-    """
-    Retrieves the list of shortlisted vendors for a given wedding.
-
-    Args:
-        wedding_id: The UUID of the wedding.
-
-    Returns:
-        A list of shortlisted vendors.
-    """
-    sql = "SELECT * FROM user_shortlisted_vendors WHERE wedding_id = :wedding_id ORDER BY created_at DESC;"
-    result = await execute_supabase_sql(sql, {"wedding_id": wedding_id})
-    if result.get("status") == "success":
-        return result.get("data", [])
-    return [{"error": f"Could not retrieve shortlisted vendors for wedding_id {wedding_id}"}]
-
-async def get_task_and_workflow_summary(wedding_id: str) -> Dict[str, Any]:
-    """
-    Provides a summary of tasks and workflows for a given wedding.
-
-    Args:
-        wedding_id: The UUID of the wedding.
-
-    Returns:
-        A dictionary with counts of total, completed, and overdue tasks, and active workflows.
-    """
-    sql = """
-    WITH task_summary AS (
-        SELECT
-            COUNT(*) as total_tasks,
-            COUNT(*) FILTER (WHERE is_complete = true) as completed_tasks,
-            COUNT(*) FILTER (WHERE is_complete = false AND due_date < CURRENT_DATE) as overdue_tasks
-        FROM tasks
-        WHERE wedding_id = :wedding_id
-    ),
-    workflow_summary AS (
-        SELECT
-            COUNT(*) as active_workflows
-        FROM workflows
-        WHERE wedding_id = :wedding_id AND status IN ('in_progress', 'paused', 'awaiting_feedback')
-    )
-    SELECT
-        (SELECT total_tasks FROM task_summary) as total_tasks,
-        (SELECT completed_tasks FROM task_summary) as completed_tasks,
-        (SELECT overdue_tasks FROM task_summary) as overdue_tasks,
-        (SELECT active_workflows FROM workflow_summary) as active_workflows;
-    """
-    result = await execute_supabase_sql(sql, {"wedding_id": wedding_id})
-    if result.get("status") == "success" and result.get("data"):
-        return result["data"][0]
-    return {"error": "Could not retrieve task and workflow summary."}
-
-
-async def get_active_wedding_for_user(user_id: str) -> Dict[str, Any]:
-    """
-    Retrieves the active wedding for a given user.
-    Assumes a user has only one active wedding.
-    """
-    sql = """
-        SELECT w.*
-        FROM weddings w
-        JOIN wedding_members wm ON w.wedding_id = wm.wedding_id
-        WHERE wm.user_id = :user_id AND w.status = 'active'
-        LIMIT 1;
-    """
-    result = await execute_supabase_sql(sql, {"user_id": user_id})
-    if result.get("status") == "success" and result.get("data"):
-        return result["data"][0]
-    return {"error": f"No active wedding found for user_id {user_id}"}
-
 
 async def resolve_artifact_filenames(filenames: List[str], session_id: str, user_id: str, app_name: Optional[str] = None, alternate_user_ids: Optional[List[str]] = None, alternate_session_ids: Optional[List[str]] = None) -> Dict[str, Any]:
     """Resolve user-visible filenames to internal artifact versions and metadata for the current session.

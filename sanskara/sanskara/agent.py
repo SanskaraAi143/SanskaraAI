@@ -32,6 +32,7 @@ from sanskara.tools import (
     get_overdue_tasks,
     get_shortlisted_vendors,
     get_task_and_workflow_summary,
+    get_active_wedding_for_user,
 )
 from sanskara.helpers import get_current_datetime # For fetching user and wedding info
 from logger import json_logger as logger # Import the custom JSON logger
@@ -58,6 +59,7 @@ creative_agent_tool = agent_tool.AgentTool(agent=creative_agent)
 task_and_timeline_tool = agent_tool.AgentTool(agent=task_and_timeline_agent)
 
 
+
 async def orchestrator_before_agent_callback(
     callback_context: CallbackContext
 ) -> Optional[LlmResponse]:
@@ -65,19 +67,8 @@ async def orchestrator_before_agent_callback(
     This function is called before the model is called.
     It performs essential setup and lightweight context priming.
     """
-    user_id = callback_context.state.get("current_user_id")
     wedding_id = callback_context.state.get("current_wedding_id")
-
-    # If wedding_id is not in state, try to fetch it for the user.
-    #if not wedding_id and user_id:
-    from sanskara.tools import get_active_wedding_for_user
-    logger.info(f"wedding_id not found in state for user {user_id}. Attempting to fetch.")
-    wedding_data = await get_active_wedding_for_user(user_id)
-    if not wedding_data.get("error"):
-        wedding_id = wedding_data.get("wedding_id")
-        callback_context.state["current_wedding_id"] = wedding_id
-        callback_context.state["wedding_data"] = wedding_data # Pass along the data
-        logger.info(f"Successfully fetched and set wedding_id: {wedding_id}")
+    user_id = callback_context.state.get("current_user_id")
 
     with logger.contextualize(
         wedding_id=wedding_id,
@@ -90,7 +81,7 @@ async def orchestrator_before_agent_callback(
         )
 
         if not wedding_id:
-            logger.warning("Could not determine wedding_id. Proceeding with minimal context.")
+            logger.warning("No wedding_id in session state. Cannot prime context.")
             callback_context.state.update(
                 {
                     "current_wedding_id": None,
@@ -99,6 +90,8 @@ async def orchestrator_before_agent_callback(
                     "conversation_summary": "",
                     "recent_messages": [],
                     "semantic_memory": {},
+                    "task_summary": {},
+                    "budget_summary": {},
                 }
             )
             return None
@@ -108,17 +101,32 @@ async def orchestrator_before_agent_callback(
             user_role = await _get_user_role(wedding_id, user_id)
             callback_context.state["current_user_role"] = user_role
             
-            # 2. Enrich with Conversation Memory
+            # 2. Lightweight Context Loading
+            from sanskara.tools import get_task_and_workflow_summary, get_budget_summary
+
+            task_summary = await get_task_and_workflow_summary(wedding_id)
+            budget_summary = await get_budget_summary(wedding_id)
+
+            callback_context.state["task_summary"] = task_summary
+            callback_context.state["budget_summary"] = budget_summary
+
+            logger.info(
+                "Loaded lightweight context: "
+                f"Tasks: {task_summary.get('total_tasks', 'N/A')}, "
+                f"Budget: {budget_summary.get('total_budget', 'N/A')}"
+            )
+
+            # 3. Enrich with Conversation Memory
             conversation_summary, recent_messages = await _get_conversation_memory(
                 wedding_id, callback_context
             )
             callback_context.state["conversation_summary"] = conversation_summary
             callback_context.state["recent_messages"] = recent_messages
 
-            # 3. Enrich with Semantic Memory
+            # 4. Enrich with Semantic Memory
             user_message = ""
-            if (callback_context.user_content and 
-                hasattr(callback_context.user_content, 'parts') and 
+            if (callback_context.user_content and
+                hasattr(callback_context.user_content, 'parts') and
                 callback_context.user_content.parts):
                 user_message = callback_context.user_content.parts[0].text or ""
 
@@ -145,55 +153,16 @@ async def orchestrator_before_agent_callback(
     return None
 
 
-async def _get_conversation_memory(
-    wedding_id: str, callback_context: CallbackContext
-) -> (Optional[str], List[Dict[str, Any]]):
-    """Fetches conversation summary and recent messages."""
-    conversation_summary = None
-    recent_messages = []
-    try:
-        from sanskara.helpers import execute_supabase_sql
-
-        sessions_resp = await execute_supabase_sql(get_chat_sessions_by_wedding_id_query(wedding_id))
-        if sessions_resp.get("status") == "success" and sessions_resp.get("data"):
-            latest_session = sessions_resp["data"][0]
-            conversation_summary = latest_session.get("summary")
-            session_id = latest_session.get("session_id")
-
-            if session_id:
-                callback_context.state["db_chat_session_id"] = session_id
-                k_turns = 6
-                msgs_resp = await execute_supabase_sql(
-                    get_recent_chat_messages_by_session_query(session_id, limit=k_turns * 2)
-                )
-                if msgs_resp.get("status") == "success" and msgs_resp.get("data"):
-                    rows = list(reversed(msgs_resp["data"]))
-                    recent_messages = [
-                        {"role": r.get("role"), "content": r.get("content")}
-                        for r in rows
-                    ]
-        else:
-            # Create a new session if none exists
-            create_resp = await execute_supabase_sql(create_chat_session_query(wedding_id=wedding_id))
-            if create_resp.get("status") == "success" and create_resp.get("data"):
-                session_id = create_resp["data"][0].get("session_id")
-                if session_id:
-                    callback_context.state["db_chat_session_id"] = session_id
-
-    except Exception as e:
-        logger.warning(f"Failed to load conversation memory: {e}")
-
-    return conversation_summary, recent_messages
-
-
 async def orchestrator_after_agent_callback(
     callback_context: CallbackContext,
 ) -> Optional[types.Content]:
     """Persist the user turn into chat_messages and touch chat_sessions."""
     wedding_id = callback_context.state.get("current_wedding_id")
+    user_id = callback_context.state.get("current_user_id")
     if not wedding_id:
         return None
 
+    # Extract user message text (if any)
     user_text = ""
     try:
         if (
@@ -201,60 +170,127 @@ async def orchestrator_after_agent_callback(
             and hasattr(callback_context.user_content, "parts")
             and callback_context.user_content.parts
         ):
-            user_text = callback_context.user_content.parts[0].text or ""
+            first_part = callback_context.user_content.parts[0]
+            user_text = getattr(first_part, "text", "") or ""
     except Exception as e:
         logger.warning(f"after_callback: failed to extract user text: {e}")
+        user_text = ""
 
+    # Skip if there's nothing to persist
     if not user_text:
         return None
 
     from sanskara.helpers import execute_supabase_sql
 
-    session_id = callback_context.state.get("db_chat_session_id")
-    if not session_id:
-        logger.warning("No db_chat_session_id found in state. Cannot persist message.")
+    # Ensure a chat session exists (use most recent or create one)
+    session_id: Optional[str] = None
+    try:
+        sessions_sql = get_chat_sessions_by_wedding_id_query(wedding_id)
+        sessions_resp = await execute_supabase_sql(sessions_sql)
+        if sessions_resp.get("status") == "success" and sessions_resp.get("data"):
+            session_id = sessions_resp["data"][0].get("session_id")
+        if not session_id:
+            # create new session
+            create_sql = create_chat_session_query(wedding_id=wedding_id, summary=None)
+            create_resp = await execute_supabase_sql(create_sql)
+            if create_resp.get("status") == "success" and create_resp.get("data"):
+                session_id = create_resp["data"][0].get("session_id")
+    except Exception as e:
+        logger.error(f"after_callback: failed to ensure chat session: {e}", exc_info=True)
         return None
 
+    if not session_id:
+        return None
+
+    # Expose DB chat session id in session state for downstream consumers (e.g., websocket service)
     try:
-        # Insert the user message
-        await execute_supabase_sql(
-            create_chat_message_query(
-                session_id=session_id,
-                sender_type="user",
-                text=user_text,
-                sender_name="user",
-                metadata=None, # Metadata is simplified
-            )
+        callback_context.state["db_chat_session_id"] = session_id
+    except Exception:
+        pass
+
+    # Build metadata for the message (intent/scope if available)
+    metadata: Dict[str, Any] = {}
+    try:
+        orch_ctx = callback_context.state.get("orchestrator_context") or {}
+        meta = orch_ctx.get("meta") or {}
+        if meta:
+            metadata["intent"] = meta.get("intent")
+            metadata["scope"] = meta.get("scope")
+            metadata["k_turns"] = meta.get("k_turns")
+            metadata["top_k"] = meta.get("top_k")
+    except Exception:
+        pass
+
+    # Insert the user message
+    try:
+        insert_sql = create_chat_message_query(
+            session_id=session_id,
+            sender_type="user",
+            text=user_text,
+            sender_name="user",
+            metadata=metadata or None,
         )
-        # Touch the session to update its last_updated_at timestamp
+        insert_resp = await execute_supabase_sql(insert_sql)
         await execute_supabase_sql(update_chat_session_last_updated_at_query(session_id))
+
+        # (Removed) Per-turn semantic memory embedding per new strategy: only store end-of-session summary embedding
+        # Leaving the old code commented for reference. If needed, re-enable behind a feature flag.
+        # try:
+        #     if os.getenv("DISABLE_SEMANTIC_RECALL", "0") not in ("1", "true", "True"):
+        #         from sanskara.sanskara.memory.supabase_memory_service import SupabaseMemoryService  # type: ignore
+        #     else:
+        #         SupabaseMemoryService = None  # type: ignore
+        # except Exception:
+        #     try:
+        #         from sanskara.memory.supabase_memory_service import SupabaseMemoryService  # type: ignore
+        #     except Exception:
+        #         SupabaseMemoryService = None  # type: ignore
+        # if SupabaseMemoryService is not None:
+        #     try:
+        #         svc = SupabaseMemoryService()
+        #         db_msg_id = None
+        #         if insert_resp.get("status") == "success" and insert_resp.get("data"):
+        #             db_msg_id = insert_resp["data"][0].get("message_id")
+        #         await svc.add_text_to_memory(
+        #             app_name=os.getenv("SANSKARA_APP_NAME", "sanskara"),
+        #             user_id=wedding_id,
+        #             text=user_text,
+        #             metadata={"session_id": session_id, "message_id": db_msg_id, **(metadata or {})},
+        #         )
+        #     except Exception as e:
+        #         logger.debug(f"after_callback: add_text_to_memory failed: {e}")
 
     except Exception as e:
         logger.error(f"after_callback: failed to insert chat message: {e}", exc_info=True)
+        return None
 
-    # The rolling summary logic can remain as it is, as it's self-contained.
+    # Rolling summary every N turns (user messages only for now)
     try:
-        turn_count = int(callback_context.state.get("turn_count", 0)) + 1
+        turn_count = int(callback_context.state.get("turn_count") or 0) + 1
         callback_context.state["turn_count"] = turn_count
         SUMMARY_EVERY = 6
         if turn_count % SUMMARY_EVERY == 0:
+            # Pull last 12 messages for compression
             msgs_sql = get_recent_chat_messages_by_session_query(session_id, limit=12)
             msgs_resp = await execute_supabase_sql(msgs_sql)
-            messages = msgs_resp.get("data") or []
-
+            messages = msgs_resp.get("data") if msgs_resp.get("status") == "success" else []
+            # Simple compact summary: collapse user/assistant lines into bullets and trim length
             def _compact(text: str, max_len: int = 180) -> str:
-                if not text: return ""
+                if not text:
+                    return ""
                 t = text.strip().replace("\n", " ")
                 return (t[: max_len - 1] + "…") if len(t) > max_len else t
-
-            bullets = [
-                f"{'U' if r.get('role') == 'user' else 'A'}: {_compact(r.get('content'))}"
-                for r in reversed(messages) if r.get('content')
-            ]
-            summary_text = " | ".join(bullets[-8:])
+            bullets = []
+            for r in reversed(messages or []):  # chronological
+                role = r.get("role", "user")
+                content = r.get("content", "")
+                if not content:
+                    continue
+                prefix = "U:" if role == "user" else "A:"
+                bullets.append(f"{prefix} {_compact(content)}")
+            summary_text = " | ".join(bullets[-8:])  # keep last 8 lines compact
             summary_payload = {"rolling_summary": summary_text}
             await execute_supabase_sql(update_chat_session_summary_query(session_id, summary_payload))
-
     except Exception as e:
         logger.warning(f"after_callback: rolling summary failed: {e}")
 
@@ -314,6 +350,7 @@ orchestrator_agent = LlmAgent(
         get_overdue_tasks,
         get_shortlisted_vendors,
         get_task_and_workflow_summary,
+        get_active_wedding_for_user,
         # Sub-Agent Tools
         vendor_management_agent_tool,
         budget_and_expense_agent_tool,
