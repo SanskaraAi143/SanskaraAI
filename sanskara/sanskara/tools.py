@@ -23,6 +23,7 @@ __all__ = [
     "get_task_feedback",
     "get_task_approvals",
     "get_complete_wedding_context",
+    "get_active_wedding_for_user",
     "resolve_artifact_filenames",
     "load_artifact_content",
     "list_user_artifacts",
@@ -659,6 +660,24 @@ async def get_task_and_workflow_summary(wedding_id: str) -> Dict[str, Any]:
     if result.get("status") == "success" and result.get("data"):
         return result["data"][0]
     return {"error": "Could not retrieve task and workflow summary."}
+
+
+async def get_active_wedding_for_user(user_id: str) -> Dict[str, Any]:
+    """
+    Retrieves the active wedding for a given user.
+    Assumes a user has only one active wedding.
+    """
+    sql = """
+        SELECT w.*
+        FROM weddings w
+        JOIN wedding_members wm ON w.wedding_id = wm.wedding_id
+        WHERE wm.user_id = :user_id AND w.status = 'active'
+        LIMIT 1;
+    """
+    result = await execute_supabase_sql(sql, {"user_id": user_id})
+    if result.get("status") == "success" and result.get("data"):
+        return result["data"][0]
+    return {"error": f"No active wedding found for user_id {user_id}"}
 
 
 async def resolve_artifact_filenames(filenames: List[str], session_id: str, user_id: str, app_name: Optional[str] = None, alternate_user_ids: Optional[List[str]] = None, alternate_session_ids: Optional[List[str]] = None) -> Dict[str, Any]:

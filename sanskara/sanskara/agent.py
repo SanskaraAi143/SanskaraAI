@@ -66,9 +66,20 @@ async def orchestrator_before_agent_callback(
     This function is called before the model is called.
     It performs essential setup and lightweight context priming.
     """
-    wedding_id = callback_context.state.get("current_wedding_id")
     user_id = callback_context.state.get("current_user_id")
-    
+    wedding_id = callback_context.state.get("current_wedding_id")
+
+    # If wedding_id is not in state, try to fetch it for the user.
+    if not wedding_id and user_id:
+        from sanskara.tools import get_active_wedding_for_user
+        logger.info(f"wedding_id not found in state for user {user_id}. Attempting to fetch.")
+        wedding_data = await get_active_wedding_for_user(user_id)
+        if not wedding_data.get("error"):
+            wedding_id = wedding_data.get("wedding_id")
+            callback_context.state["current_wedding_id"] = wedding_id
+            callback_context.state["wedding_data"] = wedding_data # Pass along the data
+            logger.info(f"Successfully fetched and set wedding_id: {wedding_id}")
+
     with logger.contextualize(
         wedding_id=wedding_id,
         user_id=user_id,
@@ -80,13 +91,12 @@ async def orchestrator_before_agent_callback(
         )
 
         if not wedding_id:
-            logger.warning("No wedding_id in session state. Cannot prime context.")
-            # Set a minimal state to prevent prompt errors
+            logger.warning("Could not determine wedding_id. Proceeding with minimal context.")
             callback_context.state.update(
                 {
                     "current_wedding_id": None,
                     "current_user_id": user_id,
-                    "current_user_role": "guest", # Safest default
+                    "current_user_role": "guest",
                     "conversation_summary": "",
                     "recent_messages": [],
                     "semantic_memory": {},
@@ -99,14 +109,14 @@ async def orchestrator_before_agent_callback(
             user_role = await _get_user_role(wedding_id, user_id)
             callback_context.state["current_user_role"] = user_role
             
-            # 2. Enrich with Conversation Memory (Summary & Recent Turns)
+            # 2. Enrich with Conversation Memory
             conversation_summary, recent_messages = await _get_conversation_memory(
                 wedding_id, callback_context
             )
             callback_context.state["conversation_summary"] = conversation_summary
             callback_context.state["recent_messages"] = recent_messages
 
-            # 3. Enrich with Semantic Memory (Fact Search)
+            # 3. Enrich with Semantic Memory
             user_message = ""
             if (callback_context.user_content and 
                 hasattr(callback_context.user_content, 'parts') and 
@@ -125,9 +135,7 @@ async def orchestrator_before_agent_callback(
             
             logger.info(
                 f"OrchestratorAgent context primed for wedding {wedding_id}. "
-                f"User Role: {user_role}, "
-                f"Convo Summary: {'Yes' if conversation_summary else 'No'}, "
-                f"Semantic Facts: {len(semantic_memory.get('facts', []))}"
+                f"User Role: {user_role}."
             )
 
         except Exception as e:
@@ -135,8 +143,6 @@ async def orchestrator_before_agent_callback(
                 f"Error in orchestrator_before_agent_callback for wedding {wedding_id}: {e}",
                 exc_info=True,
             )
-            # Gracefully allow the agent to proceed with minimal context
-            # rather than raising an exception and halting the turn.
     return None
 
 
