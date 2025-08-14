@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Optional, Dict, Any, List
 from google.adk.agents import LlmAgent
 from google.adk.models import LlmResponse, LlmRequest
@@ -58,6 +59,100 @@ creative_agent_tool = agent_tool.AgentTool(agent=creative_agent)
 #guest_and_communication_tool = agent_tool.AgentTool(agent=guest_and_communication_agent)
 task_and_timeline_tool = agent_tool.AgentTool(agent=task_and_timeline_agent)
 
+
+async def parse_and_load_images_callback(
+    callback_context: CallbackContext,
+    llm_request: LlmRequest,
+) -> Optional[LlmResponse]:
+    """Parse [FILES: ...] references in the latest user message and inline matching image artifacts.
+
+    - Looks for patterns like [FILES: file1.png, file2.jpg] or [FILE: name.jpeg].
+    - Loads artifacts via callback_context.load_artifact and injects them as parts before model call.
+    - Cleans the user text by removing the [FILES: ...] markers to avoid confusing the model.
+    - Returns None to proceed with modified request; or a short LlmResponse on hard error.
+    """
+    logger.info("Parsing and loading images from user message")
+    try:
+        if not llm_request or not getattr(llm_request, "contents", None):
+            return None
+
+        # Find the last user content
+        user_content = None
+        user_index = None
+        for i, content in enumerate(reversed(llm_request.contents)):
+            if getattr(content, "role", None) == "user":
+                user_content = content
+                user_index = len(llm_request.contents) - 1 - i
+                break
+
+        if user_content is None or not getattr(user_content, "parts", None):
+            return None
+
+        first_part = user_content.parts[0] if user_content.parts else None
+        user_text = getattr(first_part, "text", "") or ""
+        if not user_text:
+            return None
+
+        # Match [FILES: ...] or [FILE: ...]
+        matches = re.findall(r"\[(FILES?|files?):\s*([^\]]+)\]", user_text)
+        if not matches:
+            return None
+
+        # Collect filenames across all matches; split on comma or semicolon
+        filenames: List[str] = []
+        for _label, inner in matches:
+            parts = re.split(r"[,;]", inner)
+            filenames.extend([p.strip() for p in parts if p and p.strip()])
+
+        if not filenames:
+            return None
+
+        # Load artifacts and keep image-like ones
+        image_parts: List[Any] = []
+        for fname in filenames:
+            try:
+                art = await callback_context.load_artifact(filename=fname)
+            except Exception as e:
+                logger.debug(f"before_model: load_artifact failed for {fname}: {e}")
+                continue
+            # Expecting an object with inline_data {mime_type, data}
+            inline = getattr(art, "inline_data", None)
+            mime = getattr(inline, "mime_type", None) if inline else None
+            if mime and isinstance(mime, str) and mime.lower().startswith("image/"):
+                image_parts.append(art)
+                logger.info({
+                    "event": "before_model:add_image_part",
+                    "filename": fname,
+                    "mime_type": mime,
+                })
+
+        if not image_parts:
+            return None
+
+        # Clean the text by removing all [FILES: ...] segments
+        cleaned_text = re.sub(r"\[(FILES?|files?):\s*[^\]]+\]", "", user_text).strip()
+
+        # Rebuild user parts: cleaned text (if any) + images
+        new_parts: List[types.Part] = []
+        if cleaned_text:
+            new_parts.append(types.Part(text=cleaned_text))
+        new_parts.extend(image_parts)  # artifacts are already types.Part-compatible
+
+        updated_user = types.Content(role="user", parts=new_parts)
+        contents_copy = list(llm_request.contents)
+        contents_copy[user_index] = updated_user
+        llm_request.contents = contents_copy
+
+        logger.info({
+            "event": "before_model:enhanced_with_images",
+            "count": len(image_parts),
+            "filenames": filenames,
+        })
+        return None
+    except Exception as e:
+        logger.error(f"before_model: parse_and_load_images_callback error: {e}", exc_info=True)
+        # Fail open: proceed with normal request
+        return None
 
 
 async def orchestrator_before_agent_callback(
@@ -485,10 +580,11 @@ orchestrator_agent = LlmAgent(
         ritual_and_cultural_agent_tool,
         creative_agent_tool,
         task_and_timeline_tool,
-        load_artifact_content,
-        list_user_artifacts,
-        list_user_files_py,
+        #load_artifact_content,
+        #list_user_artifacts,
+        #list_user_files_py,
     ],
+    #before_model_callback=parse_and_load_images_callback,
     before_agent_callback= orchestrator_before_agent_callback,
     after_agent_callback= orchestrator_after_agent_callback,
 )

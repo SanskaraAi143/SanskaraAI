@@ -18,7 +18,7 @@ import requests
 
 # Configuration
 WS_URL = "ws://localhost:8765/ws"
-API_BASE = "http://localhost:8000"  # REST API base for artifacts
+API_BASE = "http://localhost:8765"  # REST API base for artifacts
 USER_ID = "fca04215-2af3-4a4e-bcfa-c27a4f54474c"
 
 class SimpleClient:

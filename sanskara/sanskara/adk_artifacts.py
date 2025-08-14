@@ -48,17 +48,17 @@ async def list_session_artifacts(app_name: str, user_id: str, session_id: str):
     synthesize minimal entries from the raw artifact service keys so tools still surface them.
     """
     key = (app_name, user_id, session_id)
-    entries_dict = _session_artifact_index.get(key, {})
-    if entries_dict:
-        items = list(entries_dict.values())
-        logger.debug({
-            "event": "list_session_artifacts:metadata_index_hit",
-            "key": key,
-            "count": len(items)
-        })
-        return items
+    # entries_dict = _session_artifact_index.get(key, {})
+    # if entries_dict:
+    #     items = list(entries_dict.values())
+    #     logger.debug({
+    #         "event": "list_session_artifacts:metadata_index_hit",
+    #         "key": key,
+    #         "count": len(items)
+    #     })
+    #     return items
 
-    # Fallback: interrogate artifact service directly
+    # # Fallback: interrogate artifact service directly
     try:
         raw_keys = await artifact_service.list_artifact_keys(app_name=app_name, user_id=user_id, session_id=session_id)  # type: ignore
         synthesized = []

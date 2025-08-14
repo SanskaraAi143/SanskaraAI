@@ -3,6 +3,7 @@ import json
 import base64
 import os
 import traceback
+import re
 from urllib.parse import urlparse, parse_qs
 from logger import json_logger as logger # Import the custom JSON logger
 
@@ -208,11 +209,63 @@ async def websocket_endpoint(websocket: WebSocket):
                     text_content = text_data.get("data", "")
                     if text_content:
                         try:
-                            #agent_response = await agent_instance.process_message(session, text_content)
+                            # Parse [FILES: ...] style references and attach artifacts (images/blobs) to the user message
+                            # Example: "Please compare [FILES: img1.png, img2.jpg]"
+                            app_name = os.getenv("SANSKARA_APP_NAME", "sanskara")
+                            session_id = (
+                                session.state.get("adk_session_id")
+                                or getattr(session, "session_id", None)
+                                or getattr(session, "handle", None)
+                                or getattr(session, "id", None)
+                            )
+                            filenames: list[str] = []
+                            try:
+                                matches = re.findall(r"\[(FILES?|files?):\s*([^\]]+)\]", text_content)
+                                for _label, inner in matches:
+                                    parts = re.split(r"[,;]", inner)
+                                    filenames.extend([p.strip() for p in parts if p and p.strip()])
+                            except Exception:
+                                pass
+
+                            artifact_parts: list[types.Part] = []
+                            if filenames and session_id and user_id:
+                                for fname in filenames:
+                                    try:
+                                        art = await artifact_service.load_artifact(  # type: ignore
+                                            app_name=app_name,
+                                            user_id=user_id,
+                                            session_id=session_id,
+                                            filename=fname,
+                                        )
+                                        if art is not None:
+                                            artifact_parts.append(art)
+                                            logger.info({
+                                                "event": "ws_inline_artifact",
+                                                "filename": fname,
+                                                "mime_type": getattr(getattr(art, "inline_data", None), "mime_type", None),
+                                            })
+                                        else:
+                                            logger.warning(f"Artifact not found for filename={fname} user={user_id} session={session_id}")
+                                    except Exception as e:
+                                        logger.error(f"load_artifact failed for {fname}: {e}")
+
+                            # Clean the [FILES: ...] markers from user text
+                            cleaned_text = re.sub(r"\[(FILES?|files?):\s*[^\]]+\]", "", text_content).strip() if text_content else text_content
+
+                            user_parts: list[types.Part] = []
+                            if cleaned_text:
+                                user_parts.append(types.Part(text=cleaned_text))
+                            # Append any artifacts we successfully loaded
+                            if artifact_parts:
+                                user_parts.extend(artifact_parts)
+                            # Fallback: if no parts produced, ensure we still send original text
+                            if not user_parts:
+                                user_parts = [types.Part(text=text_content)]
+
                             live_request_queue.send_content(
                                 types.Content(
                                     role="user",
-                                    parts=[types.Part(text=text_content)]
+                                    parts=user_parts,
                                 )
                             )
                             #await websocket.send_json({"type": "text", "data": agent_response})
@@ -258,8 +311,17 @@ async def websocket_endpoint(websocket: WebSocket):
                         for part in event.content.parts:
                             # Process audio content
                             if hasattr(part, "inline_data") and part.inline_data:
-                                b64_audio = base64.b64encode(part.inline_data.data).decode("utf-8")
-                                await websocket.send_json({"type": "audio", "data": b64_audio})
+                                try:
+                                    mime = getattr(part.inline_data, "mime_type", None) or ""
+                                    b64_data = base64.b64encode(part.inline_data.data).decode("utf-8")
+                                    if mime.startswith("audio/"):
+                                        await websocket.send_json({"type": "audio", "data": b64_data, "mime": mime})
+                                    elif mime.startswith("image/"):
+                                        await websocket.send_json({"type": "image", "data": b64_data, "mime": mime})
+                                    else:
+                                        await websocket.send_json({"type": "blob", "data": b64_data, "mime": mime})
+                                except Exception as e:
+                                    logger.error(f"Failed to forward inline_data: {e}")
 
                             # Process text content
                             if hasattr(part, "text") and part.text:
