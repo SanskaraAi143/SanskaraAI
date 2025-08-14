@@ -14,13 +14,12 @@ from google.genai import types
 # Import the orchestrator_agent and its tools
 from sanskara.agent import orchestrator_agent
 from sanskara.tools import (
-    get_wedding_context,
-    get_active_workflows,
-    get_tasks_for_wedding,
-    update_workflow_status,
-    create_workflow,
-    update_task_details,
-    create_task
+    get_wedding_details,
+    get_budget_summary,
+    get_overdue_tasks,
+    get_upcoming_deadlines,
+    get_shortlisted_vendors,
+    get_task_and_workflow_summary,
 )
 
 # Import execute_supabase_sql for actual calls
@@ -40,21 +39,13 @@ async def test_orchestrator_agent_instantiation():
     #print the agent's description for verification
 
 @pytest.mark.asyncio
-async def test_orchestrator_agent_tools_registration_and_execution():
+async def test_orchestrator_agent_new_tools_execution():
     """
-    Tests that the direct database tools are correctly registered with the OrchestratorAgent
-    and can execute (make actual Supabase calls).
+    Tests that the new granular database tools can execute correctly.
     """
-  
-    # Generate unique IDs for testing to avoid conflicts with existing data
     test_wedding_id = str(uuid.uuid4())
-    test_workflow_id = str(uuid.uuid4())
-    test_task_id = str(uuid.uuid4())
 
-    # --- Test create_wedding (prerequisite for other tests) ---
-    # We need a wedding entry to test workflows and tasks related to it.
-    # This is a simplified direct SQL execution for test setup/teardown.
-    # In a real app, this would be part of a setup_agent or similar.
+    # --- Setup: Create a test wedding ---
     create_wedding_sql = """
         INSERT INTO weddings (wedding_id, wedding_name, status)
         VALUES (:wedding_id, :wedding_name, :status)
@@ -62,50 +53,41 @@ async def test_orchestrator_agent_tools_registration_and_execution():
     """
     create_wedding_params = {
         "wedding_id": test_wedding_id,
-        "wedding_name": "Test Wedding for Orchestrator",
+        "wedding_name": "Test Wedding for New Tools",
         "status": "active"
     }
     await execute_supabase_sql(create_wedding_sql, create_wedding_params)
 
     try:
-        # Test get_wedding_context
-        result = await get_wedding_context(test_wedding_id)
-        assert result is not None
-        assert result.get("wedding_id") == test_wedding_id
-        assert result.get("wedding_name") == "Test Wedding for Orchestrator"
+        # Test get_wedding_details
+        details = await get_wedding_details(test_wedding_id)
+        assert details is not None
+        assert details.get("wedding_id") == test_wedding_id
+        assert details.get("wedding_name") == "Test Wedding for New Tools"
 
-        # Test create_workflow
-        result = await create_workflow(test_wedding_id, "Test Workflow", "in_progress")
-        assert result["status"] == "success"
-        assert result["data"]["workflow_name"] == "Test Workflow"
-        created_workflow_id = result["data"]["workflow_id"]
+        # Test get_budget_summary (assuming no budget items yet)
+        budget = await get_budget_summary(test_wedding_id)
+        assert budget is not None
+        assert budget.get("total_budget") == 0
 
-        # Test get_active_workflows
-        result = await get_active_workflows(test_wedding_id)
-        assert len(result) >= 1
-        assert any(wf["workflow_id"] == created_workflow_id for wf in result)
+        # --- Setup: Create a test task ---
+        create_task_sql = """
+            INSERT INTO tasks (task_id, wedding_id, title, due_date, is_complete)
+            VALUES (:task_id, :wedding_id, :title, :due_date, :is_complete)
+        """
+        await execute_supabase_sql(create_task_sql, {
+            "task_id": str(uuid.uuid4()),
+            "wedding_id": test_wedding_id,
+            "title": "Overdue Test Task",
+            "due_date": "2022-01-01",
+            "is_complete": False
+        })
 
-        # Test update_workflow_status
-        result = await update_workflow_status(created_workflow_id, "completed")
-        assert result["status"] == "success"
-        assert result["data"][0]["status"] == "completed"
-
-        # Test create_task
-        result = await create_task(test_wedding_id, "Test Task", description="This is a test task.")
-        assert result["status"] == "success"
-        assert result["data"]["title"] == "Test Task"
-        created_task_id = result["data"]["task_id"]
-
-        # Test get_tasks_for_wedding
-        result = await get_tasks_for_wedding(test_wedding_id, status="No Status")
-        assert len(result) >= 1
-        assert any(task["task_id"] == created_task_id for task in result)
-
-        # Test update_task_details
-        result = await update_task_details(created_task_id, {"status": "completed", "is_complete": True})
-        assert result["status"] == "success"
-        assert result["data"][0]["status"] == "completed"
-        assert result["data"][0]["is_complete"] is True
+        # Test get_overdue_tasks
+        overdue_tasks = await get_overdue_tasks(test_wedding_id)
+        assert isinstance(overdue_tasks, list)
+        assert len(overdue_tasks) >= 1
+        assert any(t["title"] == "Overdue Test Task" for t in overdue_tasks)
 
     finally:
         # --- Teardown: Clean up test data ---
