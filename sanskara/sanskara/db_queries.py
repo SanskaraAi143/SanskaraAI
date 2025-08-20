@@ -32,16 +32,21 @@ def create_wedding_query(
     details_json: str,
     wedding_style: Optional[str] = None
 ) -> str:
+    # Escape single quotes in simple text fields to avoid breaking SQL
+    esc_name = wedding_name.replace("'", "''") if wedding_name is not None else None
+    esc_loc = wedding_location.replace("'", "''") if wedding_location is not None else None
+    esc_trad = wedding_tradition.replace("'", "''") if wedding_tradition is not None else None
+    esc_style = wedding_style.replace("'", "''") if wedding_style is not None else None
     return f"""
         INSERT INTO weddings (wedding_name, wedding_date, wedding_location, wedding_tradition, wedding_style, status, details)
         VALUES (
-            '{wedding_name}',
+            '{esc_name}',
             '{wedding_date}',
-            {f"'{wedding_location}'" if wedding_location is not None else 'NULL'},
-            {f"'{wedding_tradition}'" if wedding_tradition is not None else 'NULL'},
-            {f"'{wedding_style}'" if wedding_style is not None else 'NULL'},
+            {f"'{esc_loc}'" if esc_loc is not None else 'NULL'},
+            {f"'{esc_trad}'" if esc_trad is not None else 'NULL'},
+            {f"'{esc_style}'" if esc_style is not None else 'NULL'},
             'onboarding_in_progress',
-            '{details_json}'::jsonb
+            $json${details_json}$json$::jsonb
         )
         RETURNING wedding_id;
     """
@@ -49,7 +54,7 @@ def create_wedding_query(
 def update_wedding_details_jsonb_query(wedding_id: str, details_json: str) -> str:
     return f"""
         UPDATE weddings
-        SET details = '{details_json}'::jsonb,
+    SET details = $json${details_json}$json$::jsonb,
             updated_at = NOW()
         WHERE wedding_id = '{wedding_id}'
         RETURNING wedding_id;
@@ -62,13 +67,22 @@ def update_wedding_details_jsonb_field_query(wedding_id: str, field_path: List[s
     path_str = "{" + ", ".join([f'"{p}"' for p in field_path]) + "}"
     
     if isinstance(value, dict) or isinstance(value, list):
-        value_str = f"'{json.dumps(value)}'::jsonb"
+        # Safe JSON via dollar-quoting
+        value_str = f"$json${json.dumps(value)}$json$::jsonb"
     elif isinstance(value, str):
-        value_str = f"'{value}'"
+        # Use to_jsonb on a safely single-quoted text literal
+        escaped = value.replace("'", "''")
+        value_str = f"to_jsonb('{escaped}'::text)"
     elif value is None:
-        value_str = "NULL"
+        # Set JSON null explicitly
+        value_str = "'null'::jsonb"
+    elif isinstance(value, bool):
+        value_str = "to_jsonb(TRUE)" if value else "to_jsonb(FALSE)"
+    elif isinstance(value, (int, float)):
+        value_str = f"to_jsonb({value})"
     else:
-        value_str = str(value)
+        # Fallback: serialize to JSON string
+        value_str = f"$json${json.dumps(value)}$json$::jsonb"
 
     return f"""
         UPDATE weddings
@@ -221,7 +235,7 @@ def create_task_query(
         RETURNING task_id;
     """
 
-def get_tasks_by_wedding_id_query(wedding_id: str, filters: Dict[str, Any] = None) -> str:
+def get_tasks_by_wedding_id_query(wedding_id: str, filters: Optional[Dict[str, Any]] = None) -> str:
     filter_clauses = [f"{k} = '{v}'" for k, v in filters.items()] if filters else []
     where_clause = f"AND {' AND '.join(filter_clauses)}" if filter_clauses else ""
     return f"""

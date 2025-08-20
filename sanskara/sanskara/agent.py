@@ -7,7 +7,6 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools import agent_tool
 import os
 from google.genai import types
-import agentops
 
 from sanskara.sub_agents.setup_agent.agent import setup_agent
 from sanskara.sub_agents.vendor_management_agent.agent import vendor_management_agent
@@ -32,7 +31,8 @@ from sanskara.tools import (
     list_user_artifacts,
     list_user_files_py,
 )
-from sanskara.context_manager import context_manager
+# Use the new stateful Context Manager V2 (composes baseline context + workflows)
+from sanskara.context_manager_v2 import ContextManagerV2
 # Removed context_debugger import (legacy)
 from sanskara.helpers import get_current_datetime # For fetching user and wedding info
 from logger import json_logger as logger # Import the custom JSON logger
@@ -197,25 +197,23 @@ async def orchestrator_before_agent_callback(
             # Get user role (fix the hardcoded issue)
             user_role = await _get_user_role(wedding_id, user_id)
             
-            # Extract user message for intent detection
+            # Extract user message (for memory/semantic recall; no intent routing)
             user_message = ""
-            if (callback_context.user_content and 
-                hasattr(callback_context.user_content, 'parts') and 
-                callback_context.user_content.parts):
-                user_message = callback_context.user_content.parts[0].text if callback_context.user_content.parts[0].text else ""
-            
-            # Create smart context request based on user intent
-            context_request = context_manager.create_context_request(
+            if (
+                callback_context.user_content
+                and hasattr(callback_context.user_content, 'parts')
+                and callback_context.user_content.parts
+            ):
+                user_message = callback_context.user_content.parts[0].text or ""
+
+            # Build Context V2: baseline + durable workflow state + collaboration view
+            ctx_manager = ContextManagerV2()
+            context_data = await ctx_manager.build_context(
                 wedding_id=wedding_id,
                 user_id=user_id,
                 user_role=user_role,
-                user_message=user_message
+                user_message=user_message,
             )
-            
-            logger.info(f"Smart context request: intent={context_request.intent}, scope={context_request.scope}")
-            
-            # Get optimized context
-            context_data = await context_manager.get_smart_context(context_request)
 
             # Token guard: cap list sizes to keep prompt compact
             try:
@@ -243,19 +241,7 @@ async def orchestrator_before_agent_callback(
                 logger.warning(f"Token guard capping failed: {e}")
             
             # Ensure prompt-referenced keys exist with safe defaults (artifact list intentionally empty)
-            try:
-                default_keys: Dict[str, Any] = {
-                    "cultural_context": {},
-                    "guest_context": {},
-                    "collaboration_context": {},
-                    "calendar_events": [],
-                    "all_tasks": [],
-                    "recent_artifacts": [],  # intentionally NOT populated here
-                }
-                for k, v in default_keys.items():
-                    context_data.setdefault(k, v)
-            except Exception as e:
-                logger.warning(f"Default context injection failed: {e}")
+            # Baseline context already includes safe defaults
             
             # Enrich with lightweight conversation memory
             conversation_summary: Optional[str] = None
@@ -328,15 +314,14 @@ async def orchestrator_before_agent_callback(
             # Build structured orchestrator context
             try:
                 meta = OrchestratorMeta(
-                    intent=getattr(context_request.intent, "value", str(context_request.intent)),
-                    scope=getattr(context_request.scope, "value", str(context_request.scope)),
+                    intent=None,
+                    scope="context_v2",
                     k_turns=6,
                     top_k=5,
+                    context_version="v2",
                 )
                 structured_ctx = OrchestratorContext(
                     **context_data,
-                    conversation_summary=conversation_summary,
-                    recent_messages=recent_messages,
                     semantic_memory=SemanticMemory(
                         facts=semantic.get("facts", []),
                         sources=semantic.get("sources", []),
@@ -363,15 +348,14 @@ async def orchestrator_before_agent_callback(
                 )
 
             logger.info(
-                f"Successfully gathered smart context for wedding {wedding_id}. "
-                f"Intent: {context_request.intent}, Scope: {context_request.scope}, "
+                f"Successfully assembled baseline context for wedding {wedding_id}. "
                 f"Context keys: {list(context_data.keys())}"
             )
 
             callback_context.state.update(context_data)
 
             logger.info(
-                f"OrchestratorAgent smart context primed for wedding {wedding_id}. "
+                f"OrchestratorAgent baseline context primed for wedding {wedding_id}. "
                 f"Final context keys: {list(context_data.keys())}"
             )
 
@@ -528,6 +512,27 @@ async def orchestrator_after_agent_callback(
 
     return None
 
+# Lightweight output sanitizer (optional): collapse odd splits like "K ashi" -> "Kashi".
+def _sanitize_text(text: str) -> str:
+    try:
+        if not text:
+            return text
+        # Collapse multiple spaces
+        t = " ".join(text.split())
+        # Fix common ritual-word splits heuristically
+        fixes = {
+            "K ashi": "Kashi",
+            "Sn anam": "Snanam",
+            "Pend likoothuru": "Pendlikoothuru",
+            "T alambralu": "Talambralu",
+            "Mangal asutram": "Mangalsutram",
+        }
+        for k, v in fixes.items():
+            t = t.replace(k, v)
+        return t
+    except Exception:
+        return text
+
 
 async def _get_user_role(wedding_id: str, user_id: str) -> str:
     """Get the actual user role from database instead of hardcoding"""
@@ -580,11 +585,11 @@ orchestrator_agent = LlmAgent(
         ritual_and_cultural_agent_tool,
         creative_agent_tool,
         task_and_timeline_tool,
-        #load_artifact_content,
-        #list_user_artifacts,
-        #list_user_files_py,
+    load_artifact_content,
+    list_user_artifacts,
+    list_user_files_py,
     ],
-    #before_model_callback=parse_and_load_images_callback,
+    before_model_callback=parse_and_load_images_callback,
     before_agent_callback= orchestrator_before_agent_callback,
     after_agent_callback= orchestrator_after_agent_callback,
 )

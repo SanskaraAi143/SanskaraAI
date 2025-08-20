@@ -28,6 +28,34 @@ session_service = DatabaseSessionService(db_url=SESSION_SERVICE_URI)
 # artifact_service = InMemoryArtifactService()  # replaced by shared singleton
 agent_instance = root_agent # Use the RootAgent as the main agent
 
+# Reconnection settings for upstream Gemini Live session
+MAX_RECONNECT_ATTEMPTS = 3
+BASE_RECONNECT_DELAY = 0.75  # seconds
+
+def _is_transient_ws_error(err: Exception) -> bool:
+    """Classify whether a websocket error is likely transient and worth retrying."""
+    try:
+        msg = str(err) if err else ""
+        # Common transient hints from upstream (service timeouts / 5xx / transport issues)
+        hints = [
+            "1011",  # internal error (includes deadline expired)
+            "Deadline expired",
+            "Service Unavailable",
+            "temporarily",
+            "timeout",
+            "Timeout",
+            "connection",
+            "reset by peer",
+            "abnormal closure",
+            "1006",  # abnormal closure
+            "502",
+            "503",
+            "504",
+        ]
+        return any(h.lower() in msg.lower() for h in hints)
+    except Exception:
+        return False
+
 async def websocket_endpoint(websocket: WebSocket):
     """
     Handles incoming WebSocket connections for the multimodal ADK.
@@ -275,112 +303,130 @@ async def websocket_endpoint(websocket: WebSocket):
                     text_queue.task_done()
 
             async def receive_and_process_responses_from_adk():
-                # Track user and model outputs between turn completion events
-                input_texts = []
-                output_texts = []
+                """Stream responses from Gemini via ADK with reconnection on transient closures.
+
+                Reuses the same ADK session and live_request_queue when possible.
+                Notifies the client on reconnect and on final failure.
+                """
                 current_session_id = None
+                attempts = 0
 
-                # Flag to track if we've seen an interruption in the current turn
-                interrupted = False
+                # Keep running until we exhaust retries or the outer TaskGroup cancels us
+                while True:
+                    # Track user and model outputs between turn completion events
+                    input_texts = []
+                    output_texts = []
+                    interrupted = False
 
-                # Process responses from the agent
-                async for event in runner.run_live(
-                    session=session,
-                    live_request_queue=live_request_queue,
-                    run_config=run_config,
-                ):
-                    # Check for turn completion or interruption using string matching
-                    # This is a fallback approach until a proper API exists
-                    event_str = str(event)
+                    try:
+                        async for event in runner.run_live(
+                            session=session,
+                            live_request_queue=live_request_queue,
+                            run_config=run_config,
+                        ):
+                            event_str = str(event)
 
-                    # If there's a session resumption update, store the session ID
-                    if hasattr(event, 'session_resumption_update') and event.session_resumption_update:
-                        update = event.session_resumption_update
-                        if update.resumable and update.new_handle:
-                            current_session_id = update.new_handle
-                            logger.info(f"New SESSION: {current_session_id}")
-                            # Send session ID to client
-                            session_id_msg = json.dumps({
-                                "type": "session_id", 
-                                "data": current_session_id
-                            })
-                            await websocket.send(session_id_msg)
+                            # Handle session resumption updates
+                            if hasattr(event, 'session_resumption_update') and event.session_resumption_update:
+                                update = event.session_resumption_update
+                                if update.resumable and update.new_handle:
+                                    current_session_id = update.new_handle
+                                    logger.info(f"New SESSION: {current_session_id}")
+                                    try:
+                                        await websocket.send_json({
+                                            "type": "session_id",
+                                            "data": current_session_id,
+                                        })
+                                    except Exception as e:
+                                        logger.debug(f"Failed to notify client of session_id: {e}")
 
-                    # Handle content
-                    if event.content and event.content.parts:
-                        for part in event.content.parts:
-                            # Process audio content
-                            if hasattr(part, "inline_data") and part.inline_data:
-                                try:
-                                    mime = getattr(part.inline_data, "mime_type", None) or ""
-                                    b64_data = base64.b64encode(part.inline_data.data).decode("utf-8")
-                                    if mime.startswith("audio/"):
-                                        await websocket.send_json({"type": "audio", "data": b64_data, "mime": mime})
-                                    elif mime.startswith("image/"):
-                                        await websocket.send_json({"type": "image", "data": b64_data, "mime": mime})
-                                    else:
-                                        await websocket.send_json({"type": "blob", "data": b64_data, "mime": mime})
-                                except Exception as e:
-                                    logger.error(f"Failed to forward inline_data: {e}")
+                            # Forward content
+                            if event.content and event.content.parts:
+                                for part in event.content.parts:
+                                    if hasattr(part, "inline_data") and part.inline_data:
+                                        try:
+                                            mime = getattr(part.inline_data, "mime_type", None) or ""
+                                            b64_data = base64.b64encode(part.inline_data.data).decode("utf-8")
+                                            payload_type = (
+                                                "audio" if mime.startswith("audio/") else
+                                                "image" if mime.startswith("image/") else
+                                                "blob"
+                                            )
+                                            await websocket.send_json({"type": payload_type, "data": b64_data, "mime": mime})
+                                        except Exception as e:
+                                            logger.error(f"Failed to forward inline_data: {e}")
 
-                            # Process text content
-                            if hasattr(part, "text") and part.text:
-                                # Check if this is user or model text based on content role
-                                if hasattr(event.content, "role") and event.content.role == "user":
-                                    # User text shouldn't be sent to the client
-                                    input_texts.append(part.text)
-                                    
-                                else:
-                                    # From the logs, we can see the duplicated text issue happens because
-                                    # we get streaming chunks with "partial=True" followed by a final consolidated
-                                    # response with "partial=None" containing the complete text
+                                    if hasattr(part, "text") and part.text:
+                                        if hasattr(event.content, "role") and event.content.role == "user":
+                                            input_texts.append(part.text)
+                                        else:
+                                            if "partial=True" in event_str:
+                                                await websocket.send_json({"type": "text", "data": part.text})
+                                                output_texts.append(part.text)
 
-                                    # Check in the event string for the partial flag
-                                    # Only process messages with "partial=True"
-                                    if "partial=True" in event_str:
-                                        await websocket.send_json({"type": "text", "data": part.text})
-                                        output_texts.append(part.text)
-                                    # Skip messages with "partial=None" to avoid duplication
-                    # Check for interruption
-                    if event.interrupted and not interrupted:
-                        logger.info("🤐 INTERRUPTION DETECTED")
-                        await websocket.send_json({
-                            "type": "interrupted",
-                            "data": "Response interrupted by user input"
-                        })
-                        interrupted = True
-                    
-                    # Check for turn completion
-                    if event.turn_complete:
-                        # Only send turn_complete if there was no interruption
-                        if not interrupted:
-                            logger.info("✅ Gemini done talking")
+                            if event.interrupted and not interrupted:
+                                logger.info("🤐 INTERRUPTION DETECTED")
+                                await websocket.send_json({
+                                    "type": "interrupted",
+                                    "data": "Response interrupted by user input",
+                                })
+                                interrupted = True
+
+                            if event.turn_complete:
+                                if not interrupted:
+                                    logger.info("✅ Gemini done talking")
+                                    await websocket.send_json({
+                                        "type": "turn_complete",
+                                        "session_id": current_session_id,
+                                    })
+                                if input_texts:
+                                    unique_texts = list(dict.fromkeys(input_texts))
+                                    logger.info(f"Input transcription: {' '.join(unique_texts)}")
+                                if output_texts:
+                                    unique_texts = list(dict.fromkeys(output_texts))
+                                    logger.info(f"Output transcription: {' '.join(unique_texts)}")
+                                # reset per turn
+                                input_texts = []
+                                output_texts = []
+                                interrupted = False
+
+                        # If the async for exits normally, reset attempts and continue listening
+                        attempts = 0
+                        continue
+
+                    except Exception as e:
+                        # Handle transient upstream closure and try to resume
+                        is_transient = _is_transient_ws_error(e)
+                        logger.error(
+                            {
+                                "event": "adk_receive_error",
+                                "transient": is_transient,
+                                "attempts": attempts,
+                                "error": str(e),
+                            }
+                        )
+                        if not is_transient or attempts >= MAX_RECONNECT_ATTEMPTS:
+                            try:
+                                await websocket.send_json({
+                                    "type": "error",
+                                    "data": "Connection to AI service closed. Please send your message again.",
+                                })
+                            except Exception:
+                                pass
+                            break  # exit the receiver loop; TaskGroup will unwind
+
+                        # backoff and try again with same session/live_request_queue
+                        attempts += 1
+                        delay = BASE_RECONNECT_DELAY * (2 ** (attempts - 1))
+                        try:
                             await websocket.send_json({
-                                "type": "turn_complete",
-                                "session_id": current_session_id
+                                "type": "reconnecting",
+                                "data": {"attempt": attempts, "retry_in": delay},
                             })
-
-                        # Log collected transcriptions for debugging
-                        if input_texts:
-                            # Get unique texts to prevent duplication
-                            unique_texts = list(dict.fromkeys(input_texts))
-                            logger.info(f"Input transcription: {' '.join(unique_texts)}")
-                            # send transcription to client as user_input
-                            # unique_texts = list(dict.fromkeys(input_texts))
-                            # logger.info(f"Input transcription: {' '.join(unique_texts)}")
-                            # await websocket.send(json.dumps({
-                            #     "type": "user_input",
-                            #     "data": " ".join(unique_texts)
-                            # }))
-                        if output_texts:
-                            # Get unique texts to prevent duplication
-                            unique_texts = list(dict.fromkeys(output_texts))
-                            logger.info(f"Output transcription: {' '.join(unique_texts)}")
-
-                        # Reset for next turn
-                        input_texts = []
-                        output_texts = []
-                        interrupted = False
+                        except Exception:
+                            pass
+                        await asyncio.sleep(delay)
+                        # loop continues and re-enters run_live
 
             # Create tasks within the TaskGroup
             tg.create_task(handle_websocket_messages(), name="WebSocketMessageReceiver")

@@ -20,13 +20,23 @@ async def bulk_create_workflows(tool_context: ToolContext, wedding_id: str, work
 
         insert_values = []
         for workflow in workflows_data:
-            workflow_name = workflow.get("name", "Unnamed Workflow").replace("'", "''")
-            workflow_status = workflow.get("description", "not_started")
-            insert_values.append(f"('{workflow_name}', '{workflow_status}', '{wedding_id}')")
+            name = (workflow.get("name") or "Unnamed Workflow").replace("'", "''")
+            status = (workflow.get("status") or "not_started").replace("'", "''")
+            # Allow LLM to pass description/context; store into context_summary JSONB
+            context = workflow.get("context_summary") or {}
+            if not context and workflow.get("description"):
+                context = {"description": workflow.get("description")}
+            context_json = json.dumps(context).replace("'", "''") if context else None
+            context_val = f"'{context_json}'::jsonb" if context_json else "NULL"
+            insert_values.append(f"('{wedding_id}', '{name}', '{status}', {context_val})")
 
         sql = f"""
-        INSERT INTO workflows (workflow_name, status, wedding_id)
-        VALUES {", ".join(insert_values)};
+        INSERT INTO workflows (wedding_id, workflow_name, status, context_summary)
+        VALUES {", ".join(insert_values)}
+        ON CONFLICT (wedding_id, workflow_name) DO UPDATE SET
+            status = EXCLUDED.status,
+            context_summary = COALESCE(EXCLUDED.context_summary, workflows.context_summary),
+            updated_at = NOW();
         """
         logger.debug(f"Executing SQL for bulk_create_workflows: {sql}")
         try:
@@ -54,25 +64,34 @@ async def bulk_create_tasks(tool_context: ToolContext, wedding_id: str, tasks_da
 
         insert_values = []
         for task in tasks_data:
-            title = task.get("title", "Unnamed Task").replace("'", "''")
-            description = task.get("description", "").replace("'", "''")
-            is_complete = task.get("is_complete", False)
-            due_date = task.get("due_date", None)
-            priority = task.get("priority", "medium")
-            category = task.get("category", "Uncategorized").replace("'", "''")
-            status = task.get("status", "No Status")
-            lead_party = task.get("lead_party", "couple").replace("'", "''")
+            title = (task.get("title") or "Unnamed Task").replace("'", "''")
+            description = (task.get("description") or "").replace("'", "''")
+            is_complete = bool(task.get("is_complete", False))
+            due_date = task.get("due_date")
+            priority = (task.get("priority") or "medium").replace("'", "''")
+            category = (task.get("category") or "Uncategorized").replace("'", "''")
+            status = (task.get("status") or "No Status").replace("'", "''")
+            lead_party = (task.get("lead_party") or "couple").replace("'", "''")
 
             # Handle None values and format properly
             due_date_str = f"'{due_date}'" if due_date else "NULL"
-            
+
             insert_values.append(
-                f"('{title}', '{description}', {is_complete}, {due_date_str}, '{priority}', '{category}', '{status}', '{lead_party}', '{wedding_id}')"
+                f"('{wedding_id}', '{title}', '{description}', {is_complete}, {due_date_str}, '{priority}', '{category}', '{status}', '{lead_party}')"
             )
-        
+
         sql = f"""
-        INSERT INTO tasks (title, description, is_complete, due_date, priority, category, status, lead_party, wedding_id)
-        VALUES {", ".join(insert_values)};
+        INSERT INTO tasks (wedding_id, title, description, is_complete, due_date, priority, category, status, lead_party)
+        VALUES {", ".join(insert_values)}
+        ON CONFLICT (wedding_id, title) DO UPDATE SET
+            description = EXCLUDED.description,
+            is_complete = EXCLUDED.is_complete,
+            due_date = EXCLUDED.due_date,
+            priority = EXCLUDED.priority,
+            category = EXCLUDED.category,
+            status = EXCLUDED.status,
+            lead_party = EXCLUDED.lead_party,
+            updated_at = NOW();
         """
         logger.debug(f"Executing SQL for bulk_create_tasks: {sql}")
         try:
@@ -104,21 +123,29 @@ async def populate_initial_budget(tool_context: ToolContext, wedding_id: str, bu
 
         insert_values = []
         for budget in budget_details:
-            item_name = budget.get("item_name", "Unnamed Item").replace("'", "''")
-            amount = budget.get("amount", 0)
-            category = budget.get("category", "Uncategorized").replace("'", "''")
-            status = budget.get("status", "pending")
-            contribution_by = budget.get("contribution_by", "couple").replace("'", "''")
+            item_name = (budget.get("item_name") or "Unnamed Item").replace("'", "''")
+            amount = float(budget.get("amount", 0))
+            category = (budget.get("category") or "Uncategorized").replace("'", "''")
+            status = (budget.get("status") or "Pending").replace("'", "''")
+            contribution_by_raw = (budget.get("contribution_by") or "couple").lower()
+            # Map 'couple' -> 'shared' to align with schema convention
+            contribution_by = 'shared' if contribution_by_raw == 'couple' else contribution_by_raw
+            contribution_by = contribution_by.replace("'", "''")
 
-            insert_values.append(f"('{item_name}', {amount}, '{status}', '{wedding_id}', '{contribution_by}', '{category}')")
+            insert_values.append(f"('{wedding_id}', '{item_name}', '{category}', {amount}, NULL, '{status}', '{contribution_by}')")
 
         if not insert_values:
             logger.info("No budget items to populate.")
             return {"status": "success", "message": "No budget items to populate."}
 
         sql = f"""
-        INSERT INTO budget_items (item_name, amount, status, wedding_id, contribution_by, category)
-        VALUES {", ".join(insert_values)};
+        INSERT INTO budget_items (wedding_id, item_name, category, amount, vendor_name, status, contribution_by)
+        VALUES {", ".join(insert_values)}
+        ON CONFLICT (wedding_id, item_name, category) DO UPDATE SET
+            amount = EXCLUDED.amount,
+            status = EXCLUDED.status,
+            contribution_by = EXCLUDED.contribution_by,
+            updated_at = NOW();
         """
         logger.debug(f"Executing SQL for populate_initial_budget: {sql}")
         try:

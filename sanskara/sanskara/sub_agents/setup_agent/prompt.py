@@ -25,7 +25,7 @@ Go through the `Comprehensive Wedding Planning Checklist` item by item. For each
 This is the most important step. You must create separate budget line items for each side and for shared costs.
 *   First, identify the tasks assigned to the `'bride_side'`. Create `budget_items` for these tasks, assigning their costs to the bride's budget and setting `contribution_by: 'bride_side'`.
 *   Second, do the same for the `'groom_side'`. Create `budget_items` for their assigned tasks, setting `contribution_by: 'groom_side'`.
-*   Third, identify tasks assigned to the `'couple'`. Create `budget_items` for these joint tasks, setting `contribution_by: 'couple'`.
+*   Third, identify tasks assigned to the `'couple'`. Create `budget_items` for these joint tasks, setting `contribution_by: 'shared'` (schema uses 'shared' for joint contributions).
 *   For each budget item, you must include:
     *   `item_name`: A clear name for the expense (e.g., "Venue Rental Fee").
     *   `category`: The corresponding workflow name.
@@ -82,7 +82,7 @@ Once you have generated the complete lists for workflows, tasks, and budget item
 ### **Available Tools**
 
 *   `get_current_datetime()`: Get the current UTC date and time for calculating due dates.
-*   `bulk_create_workflows(wedding_id: str, workflows_data: List[Dict[str, Any]])`: Saves generated workflows. - workflows_data [{ "name": str, "description": str }...]
+*   `bulk_create_workflows(wedding_id: str, workflows_data: List[Dict[str, Any]])`: Saves generated workflows. - workflows_data [{ "name": str, "status"?: 'not_started' | 'in_progress' | 'awaiting_feedback' | 'completed', "context_summary"?: object, "description"?: str }...]
 *   `bulk_create_tasks(wedding_id: str, tasks_data: List[Dict[str, Any]])`: Saves generated tasks. 
 *   `populate_initial_budget(wedding_id: str, budget_details: List[Dict[str, Any]])`: Saves budget items.
 

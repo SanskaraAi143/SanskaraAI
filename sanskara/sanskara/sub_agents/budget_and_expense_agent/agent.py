@@ -71,7 +71,7 @@ budget_and_expense_agent = LlmAgent(
         get_all_expenses,
         #code_execution_tool,
         upsert_budget_item, # Using the new upsert tool
-        #budget_google_search_tool, # Using the Google Search Agent tool
+        budget_google_search_tool, # Using the Google Search Agent tool
     ],
 )
 logger.info("BudgetAndExpenseAgent initialized.")

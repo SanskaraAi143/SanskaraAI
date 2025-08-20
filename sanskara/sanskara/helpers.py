@@ -130,7 +130,6 @@ async def execute_supabase_sql(sql: str, params: Optional[Dict[str, Any]] = None
         logger.debug(f"execute_supabase_sql: Raw result from MCP: {mcp_result}")
         end_time = time.perf_counter()
         duration = (end_time - start_time) * 1000
-        logger.info(f"execute_supabase_sql: Query executed successfully. Duration: {duration:.2f}ms. SQL: {sql[:50]}...")
 
         if hasattr(mcp_result, "error_message") and mcp_result.error_message:
             logger.error(f"execute_supabase_sql: MCP tool returned an error: {mcp_result.error_message}")
@@ -141,12 +140,23 @@ async def execute_supabase_sql(sql: str, params: Optional[Dict[str, Any]] = None
 
             try:
                 extracted_data = extract_untrusted_json(text_response)
+                # Detect error envelope returned as JSON
+                try:
+                    text_json = json.loads(text_response.strip('"')) if isinstance(text_response, str) else None
+                except Exception:
+                    text_json = None
+                if isinstance(text_json, dict) and text_json.get("error"):
+                    logger.error(f"execute_supabase_sql: Database returned error: {text_json['error']}")
+                    return {"status": "error", "error": text_json["error"]}
+
                 if extracted_data is not None:
+                    logger.info(f"execute_supabase_sql: Query executed successfully. Duration: {duration:.2f}ms. SQL: {sql[:50]}...")
                     if isinstance(extracted_data, list):
                         return {"status": "success", "data": extracted_data}
                     else:
                         return {"status": "success", "data": [extracted_data]}
                 else:
+                    logger.info(f"execute_supabase_sql: Query executed successfully (no rows). Duration: {duration:.2f}ms. SQL: {sql[:50]}...")
                     return {"status": "success", "data": []}
             except json.JSONDecodeError:
                 logger.error(f"execute_supabase_sql: Failed to parse MCP response as JSON. Response text: {text_response}")

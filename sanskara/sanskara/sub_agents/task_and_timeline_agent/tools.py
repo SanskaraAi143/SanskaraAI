@@ -11,7 +11,7 @@ from sanskara.db_queries import (
 )
 from logger import json_logger as logger # Import the custom JSON logger
 
-async def get_tasks(wedding_id: str, filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+async def get_tasks(wedding_id: str, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """
     Fetches a list of tasks for a wedding, with optional filters.
     """

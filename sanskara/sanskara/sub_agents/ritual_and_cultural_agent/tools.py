@@ -1,14 +1,81 @@
 from typing import List, Dict, Any, Optional
 from unittest import result
- # Import the tool decorator
+# Import the tool decorator
 
 # Import astra_db from the new db.py
 from sanskara.db import astra_db
 import json
+import asyncio
 from logger import json_logger as logger
 
 
-from typing import Union, List, Dict, Any, Optional # Add Union to imports
+from typing import Union, List, Dict, Any, Optional  # Add Union to imports
+
+
+def _static_ritual_fallback(query: str, limit: int = 3) -> List[Dict[str, Any]]:
+    """Return a small, safe static fallback for common rituals when DB is unavailable."""
+    q = (query or "").lower()
+    catalog: Dict[str, Dict[str, Any]] = {
+        "saptapadi": {
+            "title": "Saptapadi (Seven Steps)",
+            "description": "The couple takes seven steps together around the sacred fire, each step representing a vow for shared life, prosperity, strength, family, health, virtues, and friendship.",
+            "region": "Pan-Indian (varies by tradition)",
+        },
+        "haldi": {
+            "title": "Haldi (Turmeric Ceremony)",
+            "description": "A cleansing and blessing ritual where family applies turmeric paste for auspiciousness, radiance, and protection before the wedding.",
+            "region": "Widespread across regions",
+        },
+        "mehendi": {
+            "title": "Mehendi (Henna)",
+            "description": "Application of intricate henna designs symbolizing joy, beauty, and auspicious beginnings; often accompanied by music and family celebrations.",
+            "region": "Widespread across regions",
+        },
+        "kanyadaan": {
+            "title": "Kanyadaan",
+            "description": "A blessing ceremony where the bride’s parents ceremonially offer blessings and support for the new journey; interpretations vary by community.",
+            "region": "Common in many North and some South Indian traditions",
+        },
+        "baraat": {
+            "title": "Baraat (Groom’s Procession)",
+            "description": "The groom arrives in a festive procession with music and dance, welcomed by the bride’s family at the venue entrance.",
+            "region": "Prominent in North Indian weddings",
+        },
+        "mangal": {
+            "title": "Mangalsutra/Thali Tying",
+            "description": "The tying of a sacred thread or necklace signifying the marital bond; names and forms vary by region.",
+            "region": "South and West Indian traditions",
+        },
+        "talambralu": {
+            "title": "Talambralu",
+            "description": "The couple showers each other with rice or turmeric-rice, symbolizing prosperity, playfulness, and abundance.",
+            "region": "Telugu weddings",
+        },
+    }
+
+    # Simple match heuristic
+    hits: List[Dict[str, Any]] = []
+    for key, val in catalog.items():
+        if key in q:
+            hits.append(val)
+    if not hits:
+        # Provide a generic outline if no keyword matched
+        hits = [
+            {
+                "title": "Common Wedding Rituals Overview",
+                "description": "Typical ceremonies include engagement, haldi, mehendi, sangeet, the main wedding rituals (like saptapadi or mangalsutra tying), and reception. Specific names and sequences vary by community and region.",
+                "region": "Varies by tradition",
+            }
+        ]
+    # Annotate with fallback metadata
+    for h in hits:
+        h.update({
+            "source": "static_fallback",
+            "confidence": "low",
+            "note": "Service temporarily unavailable; returning a concise cultural summary.",
+        })
+    return hits[: max(1, min(limit, len(hits)))]
+
 
 async def get_ritual_information(query: str, limit: int = 3) -> Union[str, List[Dict[str, Any]]]:
     """
@@ -61,29 +128,57 @@ async def get_ritual_information(query: str, limit: int = 3) -> Union[str, List[
             logger.error(f"get_ritual_information: {msg}")
             return f"Error: {msg}"
 
-        try:
-            ritual_data_collection = astra_db.get_collection("ritual_data")
-            
-            # Build the find query
-            find_query = {"$vectorize": query}
-            results_cursor = ritual_data_collection.find(
-                projection={"$vectorize": True, "content": True, "description": True}, # Request content and description
-                sort=find_query,
-                limit=limit # Use the provided limit
-            )
-           
-            ritual_info = []
-            for doc in results_cursor:
+        # Retry with exponential backoff for transient errors (e.g., 5xx/connection)
+        attempts = 0
+        base_delay = 0.5
+        last_exc: Optional[Exception] = None
+        while attempts < 3:
+            try:
+                ritual_data_collection = astra_db.get_collection("ritual_data")
+                # Build the find query
+                find_query = {"$vectorize": query}
+                results_cursor = ritual_data_collection.find(
+                    projection={"$vectorize": True, "content": True, "description": True},  # Request content and description
+                    sort=find_query,
+                    limit=limit,  # Use the provided limit
+                )
+
+                ritual_info: List[Dict[str, Any]] = []
+                for doc in results_cursor:
                     ritual_info.append(doc)
 
-            if not ritual_info:
-                logger.info(f"get_ritual_information: No relevant ritual information found for query: '{query}'")
-                return [] # Return an empty list if no relevant results found
-            return ritual_info
+                if not ritual_info:
+                    logger.info(
+                        f"get_ritual_information: No relevant ritual information found for query: '{query}'"
+                    )
+                    return []  # Return an empty list if no relevant results found
+                return ritual_info
+            except Exception as e:
+                last_exc = e
+                attempts += 1
+                # Classify likely transient errors by message hints
+                msg = str(e)
+                is_transient = any(hint in msg for hint in [
+                    "503", "502", "504", "Service Unavailable", "Timeout", "temporarily", "connection", "reset by peer"
+                ])
+                logger.warning(
+                    {
+                        "event": "ritual_info_retry",
+                        "attempt": attempts,
+                        "transient": is_transient,
+                        "error": msg,
+                    }
+                )
+                if attempts >= 3 or not is_transient:
+                    break
+                await asyncio.sleep(base_delay * (2 ** (attempts - 1)))
 
-        except Exception as e:
-            logger.error(f"get_ritual_information: Unexpected error for query '{query}': {e}", exc_info=True)
-            return "An unexpected error occurred during ritual information retrieval."
+        # Fallback path when DB is unavailable or non-transient error occurred
+        logger.error(
+            f"get_ritual_information: falling back to static data for query '{query}' due to error: {last_exc}",
+            exc_info=False,
+        )
+        return _static_ritual_fallback(query, limit)
 
 if __name__ == "__main__":
     # Example usage of the get_ritual_information function

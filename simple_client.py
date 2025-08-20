@@ -27,6 +27,10 @@ class SimpleClient:
         self.connected = False
         self.session_id = None  # ADK session id provided by server
         self._listener_task = None
+        self._reconnector_task = None
+        # Reconnect policy
+        self._max_reconnect_attempts = None  # None = unlimited attempts
+        self._base_delay = 0.75  # seconds
     
     def log(self, message):
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -61,6 +65,50 @@ class SimpleClient:
         except Exception as e:
             self.log(f"❌ Connection failed: {e}")
             return False
+
+    async def connect_with_retries(self, max_attempts: int | None = None) -> bool:
+        """Try connect() with exponential backoff; max_attempts=None means unlimited."""
+        attempt = 0
+        while True:
+            ok = await self.connect()
+            if ok:
+                return True
+            attempt += 1
+            if max_attempts is not None and attempt >= max_attempts:
+                return False
+            delay = self._base_delay * (2 ** (attempt - 1))
+            self.log(f"⏳ Reconnect attempt {attempt} failed; retrying in {delay:.2f}s…")
+            await asyncio.sleep(delay)
+
+    async def ensure_connected(self) -> bool:
+        if self.connected and self.websocket:
+            return True
+        self.log("Attempting to (re)connect…")
+        return await self.connect_with_retries(self._max_reconnect_attempts)
+
+    def start_listener(self):
+        if self._listener_task is None or self._listener_task.done():
+            self._listener_task = asyncio.create_task(self.listen_for_responses(), name="ws-listener")
+
+    def start_reconnector(self):
+        if self._reconnector_task is None or self._reconnector_task.done():
+            self._reconnector_task = asyncio.create_task(self._reconnect_loop(), name="ws-reconnector")
+
+    async def _reconnect_loop(self):
+        """Background task to keep connection alive and restart listener on reconnect."""
+        while True:
+            try:
+                if not self.connected:
+                    ok = await self.ensure_connected()
+                    if ok:
+                        self.log("🔁 Reconnected.")
+                        self.start_listener()
+                await asyncio.sleep(1.0)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.log(f"Reconnector error: {e}")
+                await asyncio.sleep(2.0)
     
     async def send_message(self, text: str):
         """Send a text chat message."""
@@ -97,6 +145,9 @@ class SimpleClient:
                     self.log(f"⏸️ Interrupted: {data.get('data', '')}")
                 elif rtype == "error":
                     self.log(f"❌ Error: {data.get('data', 'Unknown error')}")
+                elif rtype == "reconnecting":
+                    info = data.get("data", {})
+                    self.log(f"🔁 Server reconnecting upstream (attempt {info.get('attempt')} | retry_in {info.get('retry_in')}s)")
                 elif rtype == "session":
                     self.session_id = data.get("session_id") or data.get("data")
                     self.log(f"🆔 Session updated: {self.session_id}")
@@ -120,6 +171,10 @@ class SimpleClient:
             await self.websocket.close()
             self.connected = False
             self.log("🔌 Connection closed")
+        if self._listener_task and not self._listener_task.done():
+            self._listener_task.cancel()
+        if self._reconnector_task and not self._reconnector_task.done():
+            self._reconnector_task.cancel()
     
     # ---------------- Artifact helper methods (REST) -----------------
     def upload_artifact(self, file_path: str, caption: str = None):
@@ -192,9 +247,10 @@ async def run_quick_test():
     client = SimpleClient()
     print("🚀 Running Quick Test")
     print("=" * 50)
-    if not await client.connect():
+    if not await client.ensure_connected():
         return
-    listen_task = asyncio.create_task(client.listen_for_responses())
+    client.start_listener()
+    client.start_reconnector()
     # Wait a moment to ensure session id captured
     await asyncio.sleep(1)
     # Optional: list artifacts initially
@@ -213,7 +269,6 @@ async def run_quick_test():
             await asyncio.sleep(3)
         await asyncio.sleep(5)
     finally:
-        listen_task.cancel()
         await client.close()
 
 # ---------------- Interactive Chat Mode ----------------
@@ -222,9 +277,10 @@ async def run_interactive_chat():
     print("💬 Interactive Chat Mode")
     print("=" * 50)
     print("Commands: /upload <path> [caption...] | /list | /content <version> | /session | /quit")
-    if not await client.connect():
+    if not await client.ensure_connected():
         return
-    listen_task = asyncio.create_task(client.listen_for_responses())
+    client.start_listener()
+    client.start_reconnector()
     loop = asyncio.get_event_loop()
     try:
         while client.connected:
@@ -258,10 +314,12 @@ async def run_interactive_chat():
                     continue
                 client.fetch_artifact_content(parts[1])
                 continue
-            # Normal chat
-            await client.send_message(raw)
+            # Normal chat (ensure connected before send)
+            if await client.ensure_connected():
+                await client.send_message(raw)
+            else:
+                client.log("❌ Unable to send; still reconnecting. Please try again.")
     finally:
-        listen_task.cancel()
         await client.close()
 
 # ---------------- Entry Point ----------------

@@ -60,6 +60,12 @@ class OrchestratorContext(BaseModel):
     guest_context: Dict[str, Any] = {}
     collaboration_context: Dict[str, Any] = {}
 
+    # V2 additions: durable state and collaboration aggregates
+    workflow_saves: List[Dict[str, Any]] = []  # rows from workflows table (active/paused/awaiting_feedback)
+    collab_status: Dict[str, Any] = {}         # small aggregates per lead_party
+    bookings: List[Dict[str, Any]] = []        # already-booked vendors
+    thread_hint: Optional[Dict[str, Any]] = None  # lightweight hint from latest user message
+
     # Conversation memory additions
     conversation_summary: Optional[str] = None
     recent_messages: List[Dict[str, Any]] = []  # [{role, content, created_at}]
