@@ -7,7 +7,7 @@ import os, base64
 from google.adk.tools.tool_context import ToolContext
 
 from sanskara.helpers import execute_supabase_sql
-from logger import json_logger as logger # Import the custom JSON logger
+import logging # Import the custom JSON logger
 
 # Restrict exported symbols so deprecated names (e.g. list_artifacts_for_current_session) are NOT auto-exposed
 __all__ = [
@@ -50,7 +50,7 @@ async def get_wedding_context(wedding_id: str) -> dict:
         else:
             return {}
     except Exception as e:
-        logger.error(f"Error fetching wedding context for {wedding_id}: {e}")
+        logging.error(f"Error fetching wedding context for {wedding_id}: {e}")
         return {"error": str(e)}
 
 async def get_active_workflows(wedding_id: str) -> List[Dict[str, Any]]:
@@ -72,7 +72,7 @@ async def get_active_workflows(wedding_id: str) -> List[Dict[str, Any]]:
         else:
             return []
     except Exception as e:
-        logger.error(f"Error fetching active workflows for {wedding_id}: {e}")
+        logging.error(f"Error fetching active workflows for {wedding_id}: {e}")
         return {"error": str(e)}
 
 async def get_tasks_for_wedding(wedding_id: str, status: Optional[str] = None, lead_party: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -105,7 +105,7 @@ async def get_tasks_for_wedding(wedding_id: str, status: Optional[str] = None, l
         else:
             return []
     except Exception as e:
-        logger.error(f"Error fetching tasks for {wedding_id}: {e}")
+        logging.error(f"Error fetching tasks for {wedding_id}: {e}")
         return {"error": str(e)}
 
 async def update_workflow_status(workflow_id: str, new_status: str, context_summary: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -134,7 +134,7 @@ async def update_workflow_status(workflow_id: str, new_status: str, context_summ
         else:
             return {"status": "error", "message": result.get("error", "Unknown error during workflow status update")}
     except Exception as e:
-        logger.error(f"Error updating workflow {workflow_id} status to {new_status}: {e}")
+        logging.error(f"Error updating workflow {workflow_id} status to {new_status}: {e}")
         return {"status": "error", "message": str(e)}
 
 async def create_workflow(
@@ -174,7 +174,7 @@ async def create_workflow(
         else:
             return {"status": "error", "message": result.get("error", "Unknown error during workflow creation")}
     except Exception as e:
-        logger.error(f"Error creating workflow {workflow_name} for wedding {wedding_id}: {e}")
+        logging.error(f"Error creating workflow {workflow_name} for wedding {wedding_id}: {e}")
         return {"status": "error", "message": str(e)}
 
 async def upsert_workflow(
@@ -206,15 +206,15 @@ async def upsert_workflow(
         if result_select and result_select.get("status") == "success" and result_select.get("data"):
             # Workflow exists, update it
             existing_workflow_id = result_select["data"][0]["workflow_id"]
-            logger.info(f"Workflow '{workflow_name}' already exists for wedding {wedding_id}. Updating.")
+            logging.info(f"Workflow '{workflow_name}' already exists for wedding {wedding_id}. Updating.")
             return await update_workflow_status(existing_workflow_id, status, context_summary)
         else:
             # Workflow does not exist, create a new one
-            logger.info(f"Workflow '{workflow_name}' does not exist for wedding {wedding_id}. Creating new.")
+            logging.info(f"Workflow '{workflow_name}' does not exist for wedding {wedding_id}. Creating new.")
             return await create_workflow(wedding_id, workflow_name, status, context_summary)
             
     except Exception as e:
-        logger.error(f"Error in upsert_workflow for {workflow_name} (wedding {wedding_id}): {e}")
+        logging.error(f"Error in upsert_workflow for {workflow_name} (wedding {wedding_id}): {e}")
         return {"status": "error", "message": str(e)}
 
 async def update_task_details(task_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -246,7 +246,7 @@ async def update_task_details(task_id: str, updates: Dict[str, Any]) -> Dict[str
         else:
             return {"status": "error", "message": result.get("error", "Unknown error during task update")}
     except Exception as e:
-        logger.error(f"Error updating task {task_id} with updates {updates}: {e}")
+        logging.error(f"Error updating task {task_id} with updates {updates}: {e}")
         return {"status": "error", "message": str(e)}
 
 async def create_task(
@@ -301,7 +301,7 @@ async def create_task(
         else:
             return {"status": "error", "message": result.get("error", "Unknown error during task creation")}
     except Exception as e:
-        logger.error(f"Error creating task {title} for wedding {wedding_id}: {e}")
+        logging.error(f"Error creating task {title} for wedding {wedding_id}: {e}")
         return {"status": "error", "message": str(e)}
     
 
@@ -344,7 +344,7 @@ async def upsert_task(
         if result_select and result_select.get("status") == "success" and result_select.get("data"):
             # Task exists, update it
             existing_task_id = result_select["data"][0]["task_id"]
-            logger.info(f"Task '{title}' already exists for wedding {wedding_id}. Updating.")
+            logging.info(f"Task '{title}' already exists for wedding {wedding_id}. Updating.")
             updates = {
                 "description": description,
                 "is_complete": is_complete,
@@ -359,14 +359,14 @@ async def upsert_task(
             return await update_task_details(existing_task_id, updates)
         else:
             # Task does not exist, create a new one
-            logger.info(f"Task '{title}' does not exist for wedding {wedding_id}. Creating new.")
+            logging.info(f"Task '{title}' does not exist for wedding {wedding_id}. Creating new.")
             return await create_task(
                 wedding_id, title, description, is_complete, due_date,
                 priority, category, status, lead_party
             )
             
     except Exception as e:
-        logger.error(f"Error in upsert_task for {title} (wedding {wedding_id}): {e}")
+        logging.error(f"Error in upsert_task for {title} (wedding {wedding_id}): {e}")
         return {"status": "error", "message": str(e)}
 
 async def get_task_feedback(task_id: str) -> List[Dict[str, Any]]:
@@ -388,7 +388,7 @@ async def get_task_feedback(task_id: str) -> List[Dict[str, Any]]:
         else:
             return []
     except Exception as e:
-        logger.error(f"Error fetching task feedback for {task_id}: {e}")
+        logging.error(f"Error fetching task feedback for {task_id}: {e}")
         return {"error": str(e)}
 
 async def get_task_approvals(task_id: str) -> List[Dict[str, Any]]:
@@ -410,7 +410,7 @@ async def get_task_approvals(task_id: str) -> List[Dict[str, Any]]:
         else:
             return []
     except Exception as e:
-        logger.error(f"Error fetching task approvals for {task_id}: {e}")
+        logging.error(f"Error fetching task approvals for {task_id}: {e}")
         return {"error": str(e)}
 
 
@@ -492,14 +492,14 @@ async def get_complete_wedding_context(wedding_id: str) -> Dict[str, Any]:
                 "all_tasks": data.get("all_tasks", [])
             }
         else:
-            logger.warning(f"No data found for wedding_id: {wedding_id}")
+            logging.warning(f"No data found for wedding_id: {wedding_id}")
             return {
                 "wedding_data": {},
                 "active_workflows": [],
                 "all_tasks": []
             }
     except Exception as e:
-        logger.error(f"Error fetching complete wedding context for {wedding_id}: {e}")
+        logging.error(f"Error fetching complete wedding context for {wedding_id}: {e}")
         return {
             "error": str(e),
             "wedding_data": {},
@@ -514,7 +514,7 @@ async def resolve_artifact_filenames(filenames: List[str], session_id: str, user
     app_name = app_name or os.getenv("SANSKARA_APP_NAME", "sanskara")
     try:
         clean_names = [f.strip() for f in filenames if f and f.strip()]
-        logger.debug({
+        logging.debug({
             "event": "resolve_artifact_filenames:start",
             "input_filenames": filenames,
             "clean_filenames": clean_names,
@@ -578,7 +578,7 @@ async def resolve_artifact_filenames(filenames: List[str], session_id: str, user
                             break
                     if matches:
                         break
-        logger.debug({
+        logging.debug({
             "event": "resolve_artifact_filenames:result",
             "requested": clean_names,
             "resolved_count": len(matches),
@@ -588,7 +588,7 @@ async def resolve_artifact_filenames(filenames: List[str], session_id: str, user
             "attempts": attempted,
         })
         if not matches:
-            logger.debug({
+            logging.debug({
                 "event": "resolve_artifact_filenames:empty_final",
                 "available_index_size": len(index_snapshot),
                 "users_indexed": list(existing_users),
@@ -596,18 +596,18 @@ async def resolve_artifact_filenames(filenames: List[str], session_id: str, user
             })
         return {"status": "success", "resolved": matches, "final_user_id": user_id, "final_session_id": session_id}
     except Exception as e:
-        logger.error(f"resolve_artifact_filenames failed: {e}", exc_info=True)
+        logging.error(f"resolve_artifact_filenames failed: {e}", exc_info=True)
         return {"status": "error", "error": str(e)}
 
 async def load_artifact_content(filename: str , tool_context: ToolContext) -> Dict[str, Any]:
-    logger.debug({
+    logging.debug({
         "event": "load_artifact_content:start",
         "filename" : filename,
     })
     try:
         art = await tool_context.load_artifact(filename)
     except Exception as e:
-        logger.error(f"load_artifact_content load failed: {e}")
+        logging.error(f"load_artifact_content load failed: {e}")
         return {"status": "error", "error": f"load_failed: {e}"}
     return {
         "status": "success",
@@ -632,7 +632,7 @@ async def list_user_artifacts(user_id: str, session_id: str, app_name: Optional[
         items = await list_session_artifacts(app, user_id, session_id)[:limit]
         return {"status": "success", "artifacts": items, "user_id": user_id, "session_id": session_id}
     except Exception as e:
-        logger.error(f"list_user_artifacts failed: {e}")
+        logging.error(f"list_user_artifacts failed: {e}")
         return {"status": "error", "error": str(e)}
 
 # Removed deprecated list_artifacts_for_current_session to prevent the model from auto-calling it.
@@ -651,7 +651,7 @@ async def list_user_files_py(tool_context: ToolContext) -> str:  # ToolContext t
     """
     try:
         available_files = await tool_context.list_artifacts()
-        logger.debug({
+        logging.debug({
             "event": "list_user_files_py",
             "available_files_count": len(available_files),
             "available_files": available_files,
@@ -667,10 +667,10 @@ async def list_user_files_py(tool_context: ToolContext) -> str:  # ToolContext t
         file_list_str = "\n".join([f"- {fname}" for fname in available_files])
         return f"Here are your available artifacts:\n{file_list_str}"
     except ValueError as e:
-        logger.error(f"list_user_files_py ValueError: {e}")
+        logging.error(f"list_user_files_py ValueError: {e}")
         return "Error: Could not list artifacts (service not configured)."
     except Exception as e:
-        logger.error(f"list_user_files_py unexpected error: {e}", exc_info=True)
+        logging.error(f"list_user_files_py unexpected error: {e}", exc_info=True)
         return "Error: An unexpected issue occurred while listing artifacts."
 
 if __name__ == "__main__":

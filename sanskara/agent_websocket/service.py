@@ -5,7 +5,12 @@ import os
 import traceback
 import re
 from urllib.parse import urlparse, parse_qs
-from logger import json_logger as logger # Import the custom JSON logger
+import logging
+try:
+    # Prefer running from sanskara/ working directory
+    from logging_setup import setup_logging
+except ImportError:  # Fallback when imported as a package
+    from sanskara.logging_setup import setup_logging
 
 from google.adk.agents import LiveRequestQueue
 from google.adk.agents import Agent
@@ -17,6 +22,7 @@ from google.genai import types
 from fastapi import WebSocket, WebSocketDisconnect
 
 from sanskara.agent import root_agent
+from sanskara.context_service import _safe_defaults, assemble_baseline_context
 from sanskara.tools import get_wedding_context, get_active_workflows, get_tasks_for_wedding
 from sanskara.helpers import execute_supabase_sql
 from config import VOICE_NAME, SEND_SAMPLE_RATE, SESSION_SERVICE_URI
@@ -57,19 +63,21 @@ def _is_transient_ws_error(err: Exception) -> bool:
         return False
 
 async def websocket_endpoint(websocket: WebSocket):
+    # Ensure logging is configured if this module is loaded directly (e.g., tests)
+    setup_logging()
     """
     Handles incoming WebSocket connections for the multimodal ADK.
     The user_id is expected as a query parameter in the WebSocket URL.
     Example: ws://localhost:8000/ws?user_id=your_user_id
     """
     await websocket.accept()
-    logger.info(f"New WebSocket connection accepted from {websocket.client.host}:{websocket.client.port}")
+    logging.info(f"New WebSocket connection accepted from {websocket.client.host}:{websocket.client.port}")
 
     # Extract user_id from query parameters
     query_params = websocket.query_params
     user_id = query_params.get("user_id", "default_user_id") # Get user_id from query params
 
-    logger.info(f"Client connected with user_id: {user_id}")
+    logging.info(f"Client connected with user_id: {user_id}")
     
     # Create session for the ADK runner
     session = await session_service.create_session(
@@ -78,9 +86,9 @@ async def websocket_endpoint(websocket: WebSocket):
     )
     # Send the ADK session identifier to the client for future artifact & tool calls
     try:
-        logger.info(f"Session object repr: {session}")
+        logging.info(f"Session object repr: {session}")
         try:
-            logger.info(f"Session dir: {dir(session)}")
+            logging.info(f"Session dir: {dir(session)}")
         except Exception:
             pass
         session_handle = (
@@ -91,19 +99,19 @@ async def websocket_endpoint(websocket: WebSocket):
         if not session_handle:
             import uuid as _uuid
             session_handle = f"sess-{_uuid.uuid4().hex[:8]}"
-            logger.warning("Generated synthetic session handle (none provided by ADK)")
+            logging.warning("Generated synthetic session handle (none provided by ADK)")
         session.state["adk_session_id"] = session_handle
         session.state.setdefault("recent_artifacts", [])  # prevent KeyError in prompt templating
         await websocket.send_json({"type": "session", "session_id": session_handle})
-        logger.info(f"Sent session id to client: {session_handle}")
+        logging.info(f"Sent session id to client: {session_handle}")
     except Exception as e:
-        logger.error(f"Failed to emit session id to client: {e}")
+        logging.error(f"Failed to emit session id to client: {e}")
 
     # Always send ready after session announcement
     try:
         await websocket.send_json({"type": "ready"})
     except Exception as e:
-        logger.error(f"Failed to send ready message: {e}")
+        logging.error(f"Failed to send ready message: {e}")
 
     # Fetch wedding_id from user_id and prime context
     wedding_id = None
@@ -115,24 +123,41 @@ async def websocket_endpoint(websocket: WebSocket):
             wedding_id = user_wedding_result["data"][0].get("wedding_id")
 
         if not wedding_id:
-            logger.warning(f"No wedding_id found for user_id {user_id}. Cannot prime context.")
+            logging.warning(f"No wedding_id found for user_id {user_id}. Cannot prime context.")
             await websocket.send_json({"type": "error", "data": "No wedding found for your user ID. Please complete onboarding."})
         else:
-            # # Fetch wedding details, tasks, and workflows
-            # wedding_details = await get_wedding_context(wedding_id)
-            # active_workflows = await get_active_workflows(wedding_id)
-            # all_tasks = await get_tasks_for_wedding(wedding_id)
-            
-            # Update session state with the fetched context
+            # Seed state with safe defaults so prompt templating never fails
+            try:
+                defaults = _safe_defaults()
+            except Exception:
+                defaults = {}
+            # Include V2 additions and nested structures referenced in prompt
+            defaults.update({
+                "workflow_saves": [],
+                "collab_status": {"bride_side": {}, "groom_side": {}, "couple": {}},
+                "bookings": [],
+                "thread_hint": {},
+                "semantic_memory": {"facts": []},
+            })
+
+            session.state.update(defaults)
             session.state.update({
                 "current_wedding_id": wedding_id,
                 "current_user_id": user_id,
-                
             })
-            logger.info(f"Initial context primed for user {user_id}, wedding {wedding_id}: {session.state}")
+
+            # Optionally enrich with baseline context from DB (non-fatal if it fails)
+            try:
+                baseline = await assemble_baseline_context(wedding_id, user_id, user_role=None)
+                if isinstance(baseline, dict):
+                    session.state.update(baseline)
+            except Exception as e:
+                logging.debug(f"assemble_baseline_context failed during priming: {e}")
+
+            logging.info(f"Initial context primed for user {user_id}, wedding {wedding_id}: {session.state}")
     except Exception as e:
-        logger.error(f"Error priming context for user {user_id}: {e}")
-        logger.error(traceback.format_exc())
+        logging.error(f"Error priming context for user {user_id}: {e}")
+        logging.error(traceback.format_exc())
         await websocket.send_json({"type": "error", "data": f"Server error priming context: {e}"})
         await websocket.close()
         return # Exit the handler if context priming fails
@@ -184,15 +209,15 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "mode": video_mode
                             })
                         elif message.get("type") == "end":
-                            logger.info("Received end signal from client")
+                            logging.info("Received end signal from client")
                             # Optionally, signal end to the live_request_queue or close queues
                         elif message.get("type") == "text":
-                            logger.info(f"Received text: {message.get('data')}")
+                            logging.info(f"Received text: {message.get('data')}")
                             await text_queue.put({"data": message.get("data")})
                     except json.JSONDecodeError:
-                        logger.error("Invalid JSON message received")
+                        logging.error("Invalid JSON message received")
                     except Exception as e:
-                        logger.error(f"Error processing incoming message: {e}")
+                        logging.error(f"Error processing incoming message: {e}")
 
             async def process_and_send_audio_to_adk():
                 """Takes audio from queue and sends to ADK's live_request_queue."""
@@ -216,7 +241,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     video_bytes = video_data.get("data")
                     video_mode = video_data.get("mode", "webcam")
 
-                    logger.info(f"Processing video frame from {video_mode}")
+                    logging.info(f"Processing video frame from {video_mode}")
 
                     # Send the video frame to Gemini through ADK
                     live_request_queue.send_realtime(
@@ -267,15 +292,15 @@ async def websocket_endpoint(websocket: WebSocket):
                                         )
                                         if art is not None:
                                             artifact_parts.append(art)
-                                            logger.info({
+                                            logging.info({
                                                 "event": "ws_inline_artifact",
                                                 "filename": fname,
                                                 "mime_type": getattr(getattr(art, "inline_data", None), "mime_type", None),
                                             })
                                         else:
-                                            logger.warning(f"Artifact not found for filename={fname} user={user_id} session={session_id}")
+                                            logging.warning(f"Artifact not found for filename={fname} user={user_id} session={session_id}")
                                     except Exception as e:
-                                        logger.error(f"load_artifact failed for {fname}: {e}")
+                                        logging.error(f"load_artifact failed for {fname}: {e}")
 
                             # Clean the [FILES: ...] markers from user text
                             cleaned_text = re.sub(r"\[(FILES?|files?):\s*[^\]]+\]", "", text_content).strip() if text_content else text_content
@@ -298,7 +323,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             )
                             #await websocket.send_json({"type": "text", "data": agent_response})
                         except Exception as e:
-                            logger.error(f"Error processing text with agent: {e}")
+                            logging.error(f"Error processing text with agent: {e}")
                             await websocket.send_json({"type": "error", "data": f"Agent error: {e}"})
                     text_queue.task_done()
 
@@ -331,14 +356,14 @@ async def websocket_endpoint(websocket: WebSocket):
                                 update = event.session_resumption_update
                                 if update.resumable and update.new_handle:
                                     current_session_id = update.new_handle
-                                    logger.info(f"New SESSION: {current_session_id}")
+                                    logging.info(f"New SESSION: {current_session_id}")
                                     try:
                                         await websocket.send_json({
                                             "type": "session_id",
                                             "data": current_session_id,
                                         })
                                     except Exception as e:
-                                        logger.debug(f"Failed to notify client of session_id: {e}")
+                                        logging.debug(f"Failed to notify client of session_id: {e}")
 
                             # Forward content
                             if event.content and event.content.parts:
@@ -354,7 +379,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                             )
                                             await websocket.send_json({"type": payload_type, "data": b64_data, "mime": mime})
                                         except Exception as e:
-                                            logger.error(f"Failed to forward inline_data: {e}")
+                                            logging.error(f"Failed to forward inline_data: {e}")
 
                                     if hasattr(part, "text") and part.text:
                                         if hasattr(event.content, "role") and event.content.role == "user":
@@ -365,7 +390,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                                 output_texts.append(part.text)
 
                             if event.interrupted and not interrupted:
-                                logger.info("🤐 INTERRUPTION DETECTED")
+                                logging.info("🤐 INTERRUPTION DETECTED")
                                 await websocket.send_json({
                                     "type": "interrupted",
                                     "data": "Response interrupted by user input",
@@ -374,17 +399,17 @@ async def websocket_endpoint(websocket: WebSocket):
 
                             if event.turn_complete:
                                 if not interrupted:
-                                    logger.info("✅ Gemini done talking")
+                                    logging.info("✅ Gemini done talking")
                                     await websocket.send_json({
                                         "type": "turn_complete",
                                         "session_id": current_session_id,
                                     })
                                 if input_texts:
                                     unique_texts = list(dict.fromkeys(input_texts))
-                                    logger.info(f"Input transcription: {' '.join(unique_texts)}")
+                                    logging.info(f"Input transcription: {' '.join(unique_texts)}")
                                 if output_texts:
                                     unique_texts = list(dict.fromkeys(output_texts))
-                                    logger.info(f"Output transcription: {' '.join(unique_texts)}")
+                                    logging.info(f"Output transcription: {' '.join(unique_texts)}")
                                 # reset per turn
                                 input_texts = []
                                 output_texts = []
@@ -397,7 +422,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     except Exception as e:
                         # Handle transient upstream closure and try to resume
                         is_transient = _is_transient_ws_error(e)
-                        logger.error(
+                        logging.error(
                             {
                                 "event": "adk_receive_error",
                                 "transient": is_transient,
@@ -436,11 +461,11 @@ async def websocket_endpoint(websocket: WebSocket):
             tg.create_task(receive_and_process_responses_from_adk(), name="ADKResponseSender")
 
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for user_id: {user_id}")
+        logging.info(f"WebSocket disconnected for user_id: {user_id}")
     except Exception as e:
-        logger.error(f"Unhandled error in WebSocket endpoint for user_id {user_id}: {e}")
-        logger.error(traceback.format_exc())
+        logging.error(f"Unhandled error in WebSocket endpoint for user_id {user_id}: {e}")
+        logging.error(traceback.format_exc())
     finally:
         # Clean up resources if necessary
         # For example, if you stored the websocket in a manager, remove it here
-        logger.info(f"WebSocket connection closed for user_id: {user_id}")
+        logging.info(f"WebSocket connection closed for user_id: {user_id}")

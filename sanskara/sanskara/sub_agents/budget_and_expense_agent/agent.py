@@ -1,7 +1,7 @@
 from google.adk.agents import LlmAgent
 from google.adk.planners.plan_re_act_planner import PlanReActPlanner
 from google.genai import types
-from logger import json_logger as logger # Import the custom JSON logger
+import logging # Import the custom JSON logger
 from sanskara.sub_agents.google_search_agent.agent import google_search_agent
 from google.adk.tools.agent_tool import AgentTool
 from google.adk.code_executors import BuiltInCodeExecutor
@@ -74,4 +74,4 @@ budget_and_expense_agent = LlmAgent(
         budget_google_search_tool, # Using the Google Search Agent tool
     ],
 )
-logger.info("BudgetAndExpenseAgent initialized.")
+logging.info("BudgetAndExpenseAgent initialized.")

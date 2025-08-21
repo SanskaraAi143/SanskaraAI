@@ -2,7 +2,7 @@ import time
 import threading
 from uuid import uuid4
 from typing import Dict, List, Optional
-from logger import json_logger as logger
+import logging
 
 _artifacts_lock = threading.Lock()
 _artifacts: Dict[str, Dict] = {}
@@ -28,7 +28,7 @@ def add_artifact(*, wedding_id: str, user_id: Optional[str], filename: str, cont
     with _artifacts_lock:
         _artifacts[artifact_id] = record
         _wedding_index.setdefault(wedding_id, []).append(artifact_id)
-    logger.info(f"In-memory artifact stored filename={filename} size={size} wedding_id={wedding_id} artifact_id={artifact_id}")
+    logging.info(f"In-memory artifact stored filename={filename} size={size} wedding_id={wedding_id} artifact_id={artifact_id}")
     return {k: v for k, v in record.items() if k != "content"}
 
 

@@ -1,7 +1,7 @@
 from google.adk.agents import LlmAgent
 from google.adk.planners.plan_re_act_planner import PlanReActPlanner
 from google.genai import types
-from logger import json_logger as logger # Import the custom JSON logger
+import logging # Import the custom JSON logger
 
 from sanskara.sub_agents.creative_agent.prompt import CREATIVE_AGENT_PROMPT
 from sanskara.sub_agents.creative_agent.tools import (
@@ -33,4 +33,4 @@ creative_agent = LlmAgent(
         create_mood_board_collage
     ],
 )
-logger.info("CreativeAgent initialized with image generation capabilities.")
+logging.info("CreativeAgent initialized with image generation capabilities.")

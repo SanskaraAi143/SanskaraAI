@@ -13,10 +13,10 @@ from sanskara.tools import (
     get_task_approvals,
 )
 
-# Mock the logger to prevent actual logging during tests
+# Mock the logging.to prevent actual logging during tests
 @pytest.fixture(autouse=True)
-def mock_logger():
-    with patch('sanskara.tools.logger') as mock_log:
+def mock_logging():
+    with patch('sanskara.tools.logging') as mock_log:
         yield mock_log
 
 @pytest.fixture

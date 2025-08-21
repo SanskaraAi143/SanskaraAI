@@ -8,7 +8,6 @@ from websockets.exceptions import ConnectionClosed
 # from multi_agent_orchestrator.prompt import ORCHESTRATOR_PROMPT as SYSTEM_INSTRUCTION
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger()
 
 # Constants
 PROJECT_ID = "sanskaraAI"
@@ -177,14 +176,14 @@ class BaseWebSocketServer:
         self.active_clients = {}  # Store client websockets
 
     async def start(self):
-        logger.info(f"Starting WebSocket server on {self.host}:{self.port}")
+        logging.info(f"Starting WebSocket server on {self.host}:{self.port}")
         async with websockets.serve(self.handle_client, self.host, self.port):
             await asyncio.Future()  # Run forever
 
     async def handle_client(self, websocket):
         """Handle a new WebSocket client connection"""
         client_id = id(websocket)
-        logger.info(f"New client connected: {client_id}")
+        logging.info(f"New client connected: {client_id}")
 
         # Send ready message to client
         await websocket.send(json.dumps({"type": "ready"}))
@@ -193,10 +192,10 @@ class BaseWebSocketServer:
             # Start the audio processing for this client
             await self.process_audio(websocket, client_id)
         except ConnectionClosed:
-            logger.info(f"Client disconnected: {client_id}")
+            logging.info(f"Client disconnected: {client_id}")
         except Exception as e:
-            logger.error(f"Error handling client {client_id}: {e}")
-            logger.error(traceback.format_exc())
+            logging.error(f"Error handling client {client_id}: {e}")
+            logging.error(traceback.format_exc())
         finally:
             # Clean up if needed
             if client_id in self.active_clients:

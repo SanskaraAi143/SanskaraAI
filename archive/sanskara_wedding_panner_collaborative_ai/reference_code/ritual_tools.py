@@ -6,8 +6,6 @@ from google.adk.tools import ToolContext # For type hinting context
 from ..config import astra_db # Relative import
 import json
 
-# Configure logging for this module
-logger = logging.getLogger(__name__)
 
 async def search_rituals(question: str, tool_context: ToolContext, limit: int = 3):
     """
@@ -49,27 +47,27 @@ async def search_rituals(question: str, tool_context: ToolContext, limit: int = 
         ```
     """
     if tool_context is None:
-        logger.warning("search_rituals: ToolContext not provided. Caching will not be used.")
+        logging.warning("search_rituals: ToolContext not provided. Caching will not be used.")
 
     cache_key = f"search_rituals:{question}:{limit}"
     if tool_context and cache_key in tool_context.state:
-        logger.info(f"search_rituals: Returning cached data for question: '{question}', limit: {limit}")
+        logging.info(f"search_rituals: Returning cached data for question: '{question}', limit: {limit}")
         return {"status": "success", "data": tool_context.state[cache_key]}
 
     if not question or not isinstance(question, str):
         msg = "Invalid input: 'question' must be a non-empty string."
-        logger.error(f"search_rituals: {msg}")
+        logging.error(f"search_rituals: {msg}")
         return {"status": "error", "error": msg}
     if not isinstance(limit, int) or limit <= 0:
         msg = "Invalid input: 'limit' must be a positive integer."
-        logger.error(f"search_rituals: {msg}")
+        logging.error(f"search_rituals: {msg}")
         return {"status": "error", "error": msg}
 
-    logger.info(f"search_rituals: Searching for rituals related to: '{question}', limit: {limit}")
+    logging.info(f"search_rituals: Searching for rituals related to: '{question}', limit: {limit}")
 
     if astra_db is None:
         msg = "Astra DB client is not initialized. Check environment variables (ASTRA_API_TOKEN, ASTRA_API_ENDPOINT) and config."
-        logger.error(f"search_rituals: {msg}")
+        logging.error(f"search_rituals: {msg}")
         return {"status": "error", "error": msg}
 
     try:
@@ -98,20 +96,20 @@ async def search_rituals(question: str, tool_context: ToolContext, limit: int = 
         if results_cursor and isinstance(results_cursor, dict) and results_cursor.get("errors"):
             # Handle specific Astra DB errors if provided in a structured way
             error_detail = results_cursor["errors"]
-            logger.error(f"search_rituals: Astra DB query failed: {error_detail}")
+            logging.error(f"search_rituals: Astra DB query failed: {error_detail}")
             return {"status": "error", "error": f"Astra DB query failed: {error_detail}"}
 
         if not documents:
-            logger.info(f"search_rituals: No rituals found for query: '{question}'")
+            logging.info(f"search_rituals: No rituals found for query: '{question}'")
             return {"status": "success", "data": [], "message": "No rituals found matching the query."}
 
         if tool_context:
             tool_context.state[cache_key] = documents # Cache the result
-        logger.info(f"search_rituals: Successfully retrieved {len(documents)} ritual(s) for query: '{question}'. Cached: {bool(tool_context)}")
+        logging.info(f"search_rituals: Successfully retrieved {len(documents)} ritual(s) for query: '{question}'. Cached: {bool(tool_context)}")
         return {"status": "success", "data": documents}
 
     except Exception as e:
-        logger.exception(f"search_rituals: Unexpected error for query '{question}': {e}")
+        logging.exception(f"search_rituals: Unexpected error for query '{question}': {e}")
         # Mask potentially sensitive details from the raw exception in the return
         return {"status": "error", "error": "An unexpected error occurred during ritual search."}
 

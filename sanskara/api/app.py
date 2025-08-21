@@ -7,7 +7,7 @@ import asyncio
 import sqlite3
 from sanskara.db import astra_db
 from sanskara.helpers import _supabase_mcp_toolset, _supabase_tools, execute_supabase_sql
-from logger import json_logger as logger # Import the custom JSON logger
+import logging # standard logging
 from google.adk.cli.fast_api import get_fast_api_app
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -21,6 +21,13 @@ from fastapi import status, UploadFile, File, Form, Depends
 from typing import Optional
 from sanskara.adk_artifacts import artifact_service, record_artifact_metadata, list_session_artifacts
 from google.genai import types as _genai_types
+try:
+    from logging_setup import setup_logging
+except ImportError:
+    from sanskara.logging_setup import setup_logging
+
+# Ensure logging is configured when the app module is imported (e.g., under uvicorn)
+setup_logging()
 
 # Get the directory where main.py is located
 AGENT_DIR = "./"
@@ -39,11 +46,11 @@ app.title = "Sanskara AI"
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info("Application startup event.")
+    logging.info("Application startup event.")
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    logger.info("Application shutdown event.")
+    logging.info("Application shutdown event.")
 
 # Custom middleware to add request context to logger
 class ProcessRequestMiddleware(BaseHTTPMiddleware):
@@ -56,8 +63,8 @@ class ProcessRequestMiddleware(BaseHTTPMiddleware):
         wedding_id = request.headers.get("x-wedding-id") or request.query_params.get("wedding_id")
         user_id = request.headers.get("x-user-id") or request.query_params.get("user_id")
 
-        with logger.contextualize(request_id=request_id, wedding_id=wedding_id, user_id=user_id):
-            response = await call_next(request)
+        logging.info(f"request_id={request_id}, wedding_id={wedding_id}, user_id={user_id}")
+        response = await call_next(request)
         return response
 
 app.add_middleware(ProcessRequestMiddleware)
@@ -114,7 +121,7 @@ async def health_check():
     )
 
 async def check_astra_db_health() -> HealthCheckResult:
-    logger.debug("Checking AstraDB health.")
+    logging.debug("Checking AstraDB health.")
     try:
         if astra_db:
             # Perform a simple, non-destructive operation to verify connection
@@ -123,17 +130,17 @@ async def check_astra_db_health() -> HealthCheckResult:
             # This example assumes a 'test_collection' exists or can be safely accessed.
             # A more robust check might involve a small read from a known collection.
             _ = astra_db.list_collection_names()
-            logger.info("AstraDB health check successful.")
+            logging.info("AstraDB health check successful.")
             return HealthCheckResult(status="ok", message="AstraDB connection successful")
         else:
-            logger.warning("AstraDB client not initialized.")
+            logging.warning("AstraDB client not initialized.")
             return HealthCheckResult(status="degraded", message="AstraDB client not initialized")
     except Exception as e:
-        logger.error(f"AstraDB health check failed: {e}", exc_info=True)
+        logging.error(f"AstraDB health check failed: {e}", exc_info=True)
         return HealthCheckResult(status="unavailable", message=f"AstraDB connection failed: {e}")
 
 async def check_local_db_health() -> HealthCheckResult:
-    logger.debug("Checking session database health.")
+    logging.debug("Checking session database health.")
     try:
         # For DatabaseSessionService, a simple connection test should suffice.
         # The ADK's DatabaseSessionService handles the connection internally.
@@ -146,7 +153,7 @@ async def check_local_db_health() -> HealthCheckResult:
         if DATABASE_URL.startswith("postgresql://"):
             # In a real scenario, you'd want to test the connection directly.
             # For now, we'll assume if the URL is correctly formed, it's "OK".
-            logger.info("Session database health check successful (PostgreSQL URL configured).")
+            logging.info("Session database health check successful (PostgreSQL URL configured).")
             return HealthCheckResult(status="ok", message="PostgreSQL session database connection successful")
         elif DATABASE_URL.startswith("sqlite:///"):
             # Fallback for SQLite if it's still configured
@@ -154,48 +161,48 @@ async def check_local_db_health() -> HealthCheckResult:
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             conn.close()
-            logger.info("Local SQLite database health check successful.")
+            logging.info("Local SQLite database health check successful.")
             return HealthCheckResult(status="ok", message="Local SQLite session database connection successful")
         else:
-            logger.warning("Unknown DATABASE_URL scheme for session service.")
+            logging.warning("Unknown DATABASE_URL scheme for session service.")
             return HealthCheckResult(status="degraded", message="Unknown session database URL scheme.")
     except Exception as e:
-        logger.error(f"Session database health check failed: {e}", exc_info=True)
+        logging.error(f"Session database health check failed: {e}", exc_info=True)
         return HealthCheckResult(status="unavailable", message=f"Session database connection failed: {e}")
 
 async def check_agentops_health() -> HealthCheckResult:
-    logger.debug("Checking AgentOps health.")
+    logging.debug("Checking AgentOps health.")
     try:
         if AGENTOPS_API_KEY:
             # In a real scenario, you might make a small, non-authenticated API call
             # to AgentOps to verify connectivity. For simplicity, we'll check key presence.
-            logger.info("AgentOps health check successful.")
+            logging.info("AgentOps health check successful.")
             return HealthCheckResult(status="ok", message="AgentOps API key is configured")
         else:
-            logger.warning("AgentOps API key not found.")
+            logging.warning("AgentOps API key not found.")
             return HealthCheckResult(status="degraded", message="AgentOps API key not found")
     except Exception as e:
-        logger.error(f"AgentOps health check failed: {e}", exc_info=True)
+        logging.error(f"AgentOps health check failed: {e}", exc_info=True)
         return HealthCheckResult(status="unavailable", message=f"AgentOps health check failed: {e}")
 
 async def check_supabase_db_health() -> HealthCheckResult:
-    logger.debug("Checking Supabase health.")
+    logging.debug("Checking Supabase health.")
     try:
         # Check MCP toolset availability first
         if not ("execute_sql" in _supabase_tools):
-            logger.error("Supabase MCP toolset or 'execute_sql' tool not available.")
+            logging.error("Supabase MCP toolset or 'execute_sql' tool not available.")
             return HealthCheckResult(status="degraded", message="Supabase MCP toolset or execute_sql tool not available")
 
         # Then, perform a simple query to check database connectivity via MCP
         response = await execute_supabase_sql(sql="SELECT 1;")
         if response and response.get("status") == "success":
-            logger.info("Supabase health check successful.")
+            logging.info("Supabase health check successful.")
             return HealthCheckResult(status="ok", message="Supabase database and MCP toolset available")
         else:
-            logger.warning(f"Supabase query failed via MCP: {response.get('error', 'Unknown error')}")
+            logging.warning(f"Supabase query failed via MCP: {response.get('error', 'Unknown error')}")
             return HealthCheckResult(status="degraded", message=f"Supabase query failed via MCP: {response.get('error', 'Unknown error')}")
     except Exception as e:
-        logger.error(f"Supabase health check failed: {e}", exc_info=True)
+        logging.error(f"Supabase health check failed: {e}", exc_info=True)
         return HealthCheckResult(status="unavailable", message=f"Supabase health check failed: {e}")
 
 @app.post("/artifacts/upload", tags=["Artifacts"])
@@ -222,9 +229,9 @@ async def upload_artifact(
             filename=file.filename,
             artifact=part,
         )
-        logger.info(f"Artifact saved with version {artifact_version} for user_id={user_id}, session_id={session_id}")
+        logging.info(f"Artifact saved with version {artifact_version} for user_id={user_id}, session_id={session_id}")
     except Exception as e:  # pragma: no cover
-        logger.error(f"ADK save_artifact failed for {file.filename}: {e}")
+        logging.error(f"ADK save_artifact failed for {file.filename}: {e}")
         return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
 
     # Lightweight auto summary for text-like content (best-effort, avoid heavy model call here)
@@ -249,7 +256,7 @@ async def upload_artifact(
         "app_name": app_name,
     })
 
-    logger.info(f"Artifact uploaded filename={file.filename} size={len(data)} user_id={user_id} session_id={session_id} version={artifact_version}")
+    logging.info(f"Artifact uploaded filename={file.filename} size={len(data)} user_id={user_id} session_id={session_id} version={artifact_version}")
     return {"status": "success", "artifact": {
         "filename": file.filename,
         "mime_type": file.content_type or "application/octet-stream",
@@ -281,9 +288,9 @@ async def get_artifact_content(user_id: str, session_id: str, version: str, file
             filename=filename,
             version=int(version)
         )
-        logger.debug(f"artifact content {art}")
+        logging.debug(f"artifact content {art}")
     except Exception as e:  # pragma: no cover
-        logger.error(f"ADK load_artifact failed: {e}")
+        logging.error(f"ADK load_artifact failed: {e}")
         return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
     try:
         import base64

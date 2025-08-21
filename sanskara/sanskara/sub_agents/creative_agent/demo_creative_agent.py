@@ -24,7 +24,7 @@ from sanskara.sub_agents.creative_agent.tools import (
     add_item_to_mood_board
 )
 from sanskara.helpers import execute_supabase_sql
-from logger import json_logger as logger
+import logging
 from unittest.mock import MagicMock
 
 
@@ -43,23 +43,23 @@ class CreativeAgentDemo:
     
     async def setup_demo_environment(self):
         """Set up the demo environment with required data."""
-        logger.info("Setting up demo environment...")
+        logging.info("Setting up demo environment...")
         
         # Check environment variables
         required_vars = ["GOOGLE_API_KEY", "SUPABASE_URL", "SUPABASE_KEY"]
         missing_vars = [var for var in required_vars if not os.getenv(var)]
         
         if missing_vars:
-            logger.warning(f"Missing environment variables: {missing_vars}")
-            logger.info("Demo will run in simulation mode")
+            logging.warning(f"Missing environment variables: {missing_vars}")
+            logging.info("Demo will run in simulation mode")
             return False
         
-        logger.info("All required environment variables found")
+        logging.info("All required environment variables found")
         return True
     
     async def demo_image_generation(self):
         """Demonstrate AI image generation capabilities."""
-        logger.info("=== DEMO: AI Image Generation ===")
+        logging.info("=== DEMO: AI Image Generation ===")
         
         prompts = [
             {
@@ -80,7 +80,7 @@ class CreativeAgentDemo:
         ]
         
         for i, config in enumerate(prompts, 1):
-            logger.info(f"Generating image {i}/3: {config['prompt'][:50]}...")
+            logging.info(f"Generating image {i}/3: {config['prompt'][:50]}...")
             
             try:
                 result = await generate_image_with_gemini(
@@ -91,25 +91,25 @@ class CreativeAgentDemo:
                 )
                 
                 if result["status"] == "success":
-                    logger.info(f"✅ Image {i} generated successfully!")
-                    logger.info(f"   Artifact: {result.get('artifact_filename')}")
-                    logger.info(f"   URL: {result.get('supabase_url', 'N/A')}")
-                    logger.info(f"   Size: {result.get('image_size_bytes', 0)} bytes")
+                    logging.info(f"✅ Image {i} generated successfully!")
+                    logging.info(f"   Artifact: {result.get('artifact_filename')}")
+                    logging.info(f"   URL: {result.get('supabase_url', 'N/A')}")
+                    logging.info(f"   Size: {result.get('image_size_bytes', 0)} bytes")
                 else:
-                    logger.error(f"❌ Image {i} generation failed: {result.get('error_message')}")
+                    logging.error(f"❌ Image {i} generation failed: {result.get('error_message')}")
             
             except Exception as e:
-                logger.error(f"❌ Exception during image {i} generation: {e}")
+                logging.error(f"❌ Exception during image {i} generation: {e}")
             
             # Small delay between generations
             await asyncio.sleep(1)
     
     async def demo_mood_board_operations(self):
         """Demonstrate mood board management operations."""
-        logger.info("=== DEMO: Mood Board Operations ===")
+        logging.info("=== DEMO: Mood Board Operations ===")
         
         # Test 1: Generate and add to mood board
-        logger.info("Test 1: Generate image and add to mood board")
+        logging.info("Test 1: Generate image and add to mood board")
         try:
             result = await generate_and_add_to_mood_board(
                 wedding_id=self.wedding_id,
@@ -121,17 +121,17 @@ class CreativeAgentDemo:
             )
             
             if result["status"] == "success":
-                logger.info("✅ Successfully generated and added image to mood board")
-                logger.info(f"   Item ID: {result.get('item_id')}")
-                logger.info(f"   Image URL: {result.get('image_url')}")
+                logging.info("✅ Successfully generated and added image to mood board")
+                logging.info(f"   Item ID: {result.get('item_id')}")
+                logging.info(f"   Image URL: {result.get('image_url')}")
             else:
-                logger.warning(f"⚠️ Partial success or failure: {result.get('message')}")
+                logging.warning(f"⚠️ Partial success or failure: {result.get('message')}")
         
         except Exception as e:
-            logger.error(f"❌ Exception in generate_and_add_to_mood_board: {e}")
+            logging.error(f"❌ Exception in generate_and_add_to_mood_board: {e}")
         
         # Test 2: Simulate upload and add to mood board
-        logger.info("Test 2: Upload image and add to mood board")
+        logging.info("Test 2: Upload image and add to mood board")
         try:
             # Create fake image data for demo
             fake_image_data = b"\\x89PNG\\r\\n\\x1a\\n" + b"\\x00" * 100  # Minimal PNG header + data
@@ -145,39 +145,39 @@ class CreativeAgentDemo:
             )
             
             if result["status"] == "success":
-                logger.info("✅ Successfully uploaded and added image to mood board")
-                logger.info(f"   Item ID: {result.get('item_id')}")
-                logger.info(f"   Supabase URL: {result.get('supabase_url')}")
+                logging.info("✅ Successfully uploaded and added image to mood board")
+                logging.info(f"   Item ID: {result.get('item_id')}")
+                logging.info(f"   Supabase URL: {result.get('supabase_url')}")
             else:
-                logger.warning(f"⚠️ Upload failed: {result.get('message')}")
+                logging.warning(f"⚠️ Upload failed: {result.get('message')}")
         
         except Exception as e:
-            logger.error(f"❌ Exception in upload_and_add_to_mood_board: {e}")
+            logging.error(f"❌ Exception in upload_and_add_to_mood_board: {e}")
         
         # Test 3: Retrieve mood board items
-        logger.info("Test 3: Retrieve mood board items")
+        logging.info("Test 3: Retrieve mood board items")
         try:
             result = await get_mood_board_items(
                 wedding_id=self.wedding_id
             )
             
             if result["status"] == "success":
-                logger.info(f"✅ Successfully retrieved mood board items")
-                logger.info(f"   Total items: {result.get('item_count', 0)}")
-                logger.info(f"   Mood board ID: {result.get('mood_board_id')}")
+                logging.info(f"✅ Successfully retrieved mood board items")
+                logging.info(f"   Total items: {result.get('item_count', 0)}")
+                logging.info(f"   Mood board ID: {result.get('mood_board_id')}")
                 
                 # Display items
                 for item in result.get("items", [])[:3]:  # Show first 3 items
-                    logger.info(f"   - {item.get('note', 'No note')} ({item.get('category', 'No category')})")
+                    logging.info(f"   - {item.get('note', 'No note')} ({item.get('category', 'No category')})")
             else:
-                logger.warning(f"⚠️ Failed to retrieve items: {result.get('message')}")
+                logging.warning(f"⚠️ Failed to retrieve items: {result.get('message')}")
         
         except Exception as e:
-            logger.error(f"❌ Exception in get_mood_board_items: {e}")
+            logging.error(f"❌ Exception in get_mood_board_items: {e}")
     
     async def demo_database_queries(self):
         """Demonstrate new database query functionality."""
-        logger.info("=== DEMO: Database Query Integration ===")
+        logging.info("=== DEMO: Database Query Integration ===")
         
         # Test database connectivity
         try:
@@ -186,31 +186,31 @@ class CreativeAgentDemo:
             result = await execute_supabase_sql(test_query)
             
             if result.get("status") == "success":
-                logger.info("✅ Database connection successful")
+                logging.info("✅ Database connection successful")
                 current_time = result.get("data", [{}])[0].get("current_time")
-                logger.info(f"   Database time: {current_time}")
+                logging.info(f"   Database time: {current_time}")
             else:
-                logger.error(f"❌ Database connection failed: {result.get('error')}")
+                logging.error(f"❌ Database connection failed: {result.get('error')}")
         
         except Exception as e:
-            logger.error(f"❌ Database test exception: {e}")
+            logging.error(f"❌ Database test exception: {e}")
     
     async def demo_error_handling(self):
         """Demonstrate error handling capabilities."""
-        logger.info("=== DEMO: Error Handling ===")
+        logging.info("=== DEMO: Error Handling ===")
         
         # Test 1: Invalid wedding ID
-        logger.info("Test 1: Invalid wedding ID")
+        logging.info("Test 1: Invalid wedding ID")
         try:
             result = await get_mood_board_items(
                 wedding_id="invalid_wedding_id"
             )
-            logger.info(f"Result for invalid wedding ID: {result['status']}")
+            logging.info(f"Result for invalid wedding ID: {result['status']}")
         except Exception as e:
-            logger.info(f"Expected exception handled: {type(e).__name__}")
+            logging.info(f"Expected exception handled: {type(e).__name__}")
         
         # Test 2: Missing required parameters
-        logger.info("Test 2: Missing API key simulation")
+        logging.info("Test 2: Missing API key simulation")
         original_key = os.environ.get("GOOGLE_API_KEY")
         try:
             # Temporarily remove API key
@@ -223,10 +223,10 @@ class CreativeAgentDemo:
             )
             
             if result["status"] == "error":
-                logger.info("✅ Proper error handling for missing API key")
+                logging.info("✅ Proper error handling for missing API key")
             
         except Exception as e:
-            logger.info(f"Exception handled: {e}")
+            logging.info(f"Exception handled: {e}")
         finally:
             # Restore API key
             if original_key:
@@ -234,8 +234,8 @@ class CreativeAgentDemo:
     
     async def run_full_demo(self):
         """Run the complete demonstration."""
-        logger.info("🎬 Starting Creative Agent Demo")
-        logger.info("=" * 50)
+        logging.info("🎬 Starting Creative Agent Demo")
+        logging.info("=" * 50)
         
         # Setup
         env_ready = await self.setup_demo_environment()
@@ -249,7 +249,7 @@ class CreativeAgentDemo:
                 await self.demo_image_generation()
                 await asyncio.sleep(1)
             else:
-                logger.info("Skipping image generation demo due to missing environment variables")
+                logging.info("Skipping image generation demo due to missing environment variables")
             
             await self.demo_mood_board_operations()
             await asyncio.sleep(1)
@@ -257,12 +257,12 @@ class CreativeAgentDemo:
             await self.demo_error_handling()
             
         except Exception as e:
-            logger.error(f"Demo failed with exception: {e}")
+            logging.error(f"Demo failed with exception: {e}")
             import traceback
-            logger.error(traceback.format_exc())
+            logging.error(traceback.format_exc())
         
-        logger.info("=" * 50)
-        logger.info("🎉 Creative Agent Demo Complete")
+        logging.info("=" * 50)
+        logging.info("🎉 Creative Agent Demo Complete")
 
 
 async def main():

@@ -1,6 +1,6 @@
 from typing import List, Dict, Any, Optional
 import os
-from logger import json_logger as logger
+import logging
 
 DEFAULT_TOP_K = 5
 
@@ -34,7 +34,7 @@ async def _fallback_fetch_latest_memories(*, wedding_id: str, top_k: int) -> Lis
         if res.get("status") == "success":
             return res.get("data", [])
     except Exception as e:
-        logger.debug(f"_fallback_fetch_latest_memories error: {e}")
+        logging.debug(f"_fallback_fetch_latest_memories error: {e}")
     return []
 
 
@@ -63,7 +63,7 @@ async def semantic_search_facts(
             try:
                 from sanskara.memory.supabase_memory_service import SupabaseMemoryService  # type: ignore
             except Exception as imp_err:
-                logger.debug(f"semantic_recall: memory service import failed, using fallback. Error: {imp_err}")
+                logging.debug(f"semantic_recall: memory service import failed, using fallback. Error: {imp_err}")
                 SupabaseMemoryService = None  # type: ignore
 
         facts: List[str] = []
@@ -101,7 +101,7 @@ async def semantic_search_facts(
                 if facts:
                     return {"facts": facts[: int(top_k)], "sources": sources[: int(top_k)]}
             except Exception as e:
-                logger.debug(f"semantic_recall: embedding search failed, falling back. Error: {e}")
+                logging.debug(f"semantic_recall: embedding search failed, falling back. Error: {e}")
 
         # Fallback: fetch latest memories prioritizing summaries
         rows = await _fallback_fetch_latest_memories(wedding_id=wedding_id, top_k=top_k)
@@ -131,5 +131,5 @@ async def semantic_search_facts(
         return {"facts": facts[: int(top_k)], "sources": sources[: int(top_k)]}
 
     except Exception as e:
-        logger.error(f"semantic_search_facts error: {e}", exc_info=True)
+        logging.error(f"semantic_search_facts error: {e}", exc_info=True)
         return {"facts": [], "sources": []}

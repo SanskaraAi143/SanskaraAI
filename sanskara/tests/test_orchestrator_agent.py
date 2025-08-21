@@ -4,7 +4,7 @@ import asyncio
 import json
 import pytest
 import uuid
-from logger import logger
+import logging
 
 from google.adk.agents import LlmAgent
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
@@ -147,7 +147,7 @@ async def test_orchestrator_agent_basic_response():
     assert final_response_text is not None , f"Expected a response from the agent, but got None. Event: {event}"
     assert isinstance(final_response_text, str)
     assert len(final_response_text) > 0 # Ensure some response is generated
-    logger.info(f"OrchestratorAgent response: {final_response_text}")
+    logging.info(f"OrchestratorAgent response: {final_response_text}")
 
     # Further assertions can be added based on expected LLM output, e.g.:
     # assert "Hello" in final_response_text or "Hi" in final_response_text

@@ -16,7 +16,7 @@ This returns a dict safe to place in callback_context.state and to feed into Orc
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
-from logger import json_logger as logger
+import logging
 
 from sanskara.helpers import execute_supabase_sql
 from sanskara.context_service import assemble_baseline_context
@@ -84,7 +84,7 @@ async def _get_workflow_saves(wedding_id: str) -> List[Dict[str, Any]]:
         if res.get("status") == "success":
             return res.get("data", []) or []
     except Exception as e:
-        logger.debug(f"_get_workflow_saves failed: {e}")
+        logging.debug(f"_get_workflow_saves failed: {e}")
     return []
 
 
@@ -124,7 +124,7 @@ async def _get_collab_status(wedding_id: str) -> Dict[str, Any]:
             row = res["data"][0]
             return row.get("collab", {}) or {}
     except Exception as e:
-        logger.debug(f"_get_collab_status failed: {e}")
+        logging.debug(f"_get_collab_status failed: {e}")
     return {"bride_side": {}, "groom_side": {}, "couple": {}}
 
 
@@ -138,8 +138,10 @@ async def _get_bookings(wedding_id: str) -> List[Dict[str, Any]]:
         b.booking_id,
         b.vendor_id,
         COALESCE(v.vendor_name, NULL) AS vendor_name,
-        b.category,
-        b.status,
+        b.booking_status AS status,
+        b.event_date,
+        b.total_amount,
+        b.paid_amount,
         b.created_at
     FROM bookings b
     LEFT JOIN vendors v ON v.vendor_id = b.vendor_id
@@ -153,7 +155,7 @@ async def _get_bookings(wedding_id: str) -> List[Dict[str, Any]]:
             return res.get("data", []) or []
     except Exception as e:
         # Table may not exist in some environments; fail open
-        logger.debug(f"_get_bookings failed (non-fatal): {e}")
+        logging.debug(f"_get_bookings failed (non-fatal): {e}")
     return []
 
 

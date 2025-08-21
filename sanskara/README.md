@@ -236,7 +236,7 @@ Embedding / Memory:
 
 ---
 ## 13. Logging & Observability
-- Structured JSON logging via `logger.py` (loguru wrapper with contextualization: request_id, wedding_id, user_id, agent_name).
+- Structured using logging library with google adk compatibility
 - Middleware adds `request_id` per HTTP request.
 - AgentOps initialized if `AGENTOPS_API_KEY` present (tags: `google adk`).
 - Health aggregation endpoint `/health` provides component statuses.

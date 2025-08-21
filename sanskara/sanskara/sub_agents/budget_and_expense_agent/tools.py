@@ -5,7 +5,7 @@ import os
 
 from typing import Dict, Any, List, Optional
 from uuid import UUID, uuid4
-from logger import json_logger as logger # Import the custom JSON logger
+import logging # Import the custom JSON logger
 
 # Import execute_supabase_sql from the shared helpers
 from sanskara.helpers import execute_supabase_sql
@@ -27,88 +27,88 @@ async def get_total_budget(wedding_id: str) -> Dict[str, Any]:
     """
     Retrieves the total allocated budget for a given wedding_id.
     """
-    with logger.contextualize(wedding_id=wedding_id):
-        logger.debug(f"Attempting to get total budget for wedding {wedding_id}")
-        sql = get_total_budget_query(wedding_id)
-        result = await execute_supabase_sql(sql)
-        if result.get("status") == "success" and result.get("data"):
-            total_budget = result["data"]
-            logger.info(f"Successfully retrieved total budget for wedding {wedding_id}: {total_budget}")
-            return {"status": "success", "total_budget": total_budget}
-        else:
-            logger.error(f"Failed to retrieve total budget for wedding {wedding_id}. Error: {result.get('error')}", exc_info=True)
-            return {"status": "error", "message": f"Failed to retrieve total budget: {result.get('error')}"}
+    logging.info(f"wedding_id={wedding_id}")
+    logging.debug(f"Attempting to get total budget for wedding {wedding_id}")
+    sql = get_total_budget_query(wedding_id)
+    result = await execute_supabase_sql(sql)
+    if result.get("status") == "success" and result.get("data"):
+        total_budget = result["data"]
+        logging.info(f"Successfully retrieved total budget for wedding {wedding_id}: {total_budget}")
+        return {"status": "success", "total_budget": total_budget}
+    else:
+        logging.error(f"Failed to retrieve total budget for wedding {wedding_id}. Error: {result.get('error')}", exc_info=True)
+        return {"status": "error", "message": f"Failed to retrieve total budget: {result.get('error')}"}
 
 async def get_budget_summary(wedding_id: str) -> Dict[str, Any]:
     """
     Retrieves a summary of expenses by category for a given wedding_id.
     """
-    with logger.contextualize(wedding_id=wedding_id):
-        logger.debug(f"Attempting to get budget summary for wedding {wedding_id}")
-        sql = get_budget_summary_query(wedding_id)
-        result = await execute_supabase_sql(sql)
-        if result.get("status") == "success":
-            summary = result.get("data", [])
-            logger.info(f"Successfully retrieved budget summary for wedding {wedding_id}: {summary}")
-            return {"status": "success", "budget_summary": summary}
-        else:
-            logger.error(f"Failed to retrieve budget summary for wedding {wedding_id}. Error: {result.get('error')}", exc_info=True)
-            return {"status": "error", "message": f"Failed to retrieve budget summary: {result.get('error')}"}
+    logging.info(f"wedding_id={wedding_id}")
+    logging.debug(f"Attempting to get budget summary for wedding {wedding_id}")
+    sql = get_budget_summary_query(wedding_id)
+    result = await execute_supabase_sql(sql)
+    if result.get("status") == "success":
+        summary = result.get("data", [])
+        logging.info(f"Successfully retrieved budget summary for wedding {wedding_id}: {summary}")
+        return {"status": "success", "budget_summary": summary}
+    else:
+        logging.error(f"Failed to retrieve budget summary for wedding {wedding_id}. Error: {result.get('error')}", exc_info=True)
+        return {"status": "error", "message": f"Failed to retrieve budget summary: {result.get('error')}"}
 
 
 async def update_expense(expense_id: str, wedding_id: str, item_name: Optional[str] = None, category: Optional[str] = None, amount: Optional[float] = None, vendor_name: Optional[str] = None, status: Optional[str] = None, contribution_by: Optional[str] = None) -> Dict[str, Any]:
     """
     Updates an existing expense identified by expense_id for a specific wedding_id. Only provided fields should be updated.
     """
-    with logger.contextualize(expense_id=expense_id, wedding_id=wedding_id):
-        logger.debug(f"Attempting to update expense {expense_id} for wedding {wedding_id}")
-        sql = update_budget_item_query(
-            item_id=expense_id,
-            item_name=item_name,
-            category=category,
-            amount=amount,
-            vendor_name=vendor_name,
-            status=status,
-            contribution_by=contribution_by
-        )
-        result = await execute_supabase_sql(sql)
-        if result.get("status") == "success":
-            logger.info(f"Successfully updated expense: {expense_id}")
-            return {"status": "success", "expense_id": expense_id}
-        else:
-            logger.error(f"Failed to update expense: {expense_id}. Error: {result.get('error')}", exc_info=True)
-            return {"status": "error", "message": f"Failed to update expense: {result.get('error')}"}
+    logging.info(f"expense_id={expense_id}, wedding_id={wedding_id}")
+    logging.debug(f"Attempting to update expense {expense_id} for wedding {wedding_id}")
+    sql = update_budget_item_query(
+        item_id=expense_id,
+        item_name=item_name,
+        category=category,
+        amount=amount,
+        vendor_name=vendor_name,
+        status=status,
+        contribution_by=contribution_by
+    )
+    result = await execute_supabase_sql(sql)
+    if result.get("status") == "success":
+        logging.info(f"Successfully updated expense: {expense_id}")
+        return {"status": "success", "expense_id": expense_id}
+    else:
+        logging.error(f"Failed to update expense: {expense_id}. Error: {result.get('error')}", exc_info=True)
+        return {"status": "error", "message": f"Failed to update expense: {result.get('error')}"}
 
 async def delete_expense(expense_id: str, wedding_id: str) -> Dict[str, Any]:
     """
     Deletes an expense identified by expense_id for a specific wedding_id.
     """
-    with logger.contextualize(expense_id=expense_id, wedding_id=wedding_id):
-        logger.debug(f"Attempting to delete expense {expense_id} for wedding {wedding_id}")
-        sql = delete_budget_item_query(expense_id, wedding_id)
-        result = await execute_supabase_sql(sql)
-        if result.get("status") == "success":
-            logger.info(f"Successfully deleted expense: {expense_id}")
-            return {"status": "success", "expense_id": expense_id}
-        else:
-            logger.error(f"Failed to delete expense: {expense_id}. Error: {result.get('error')}", exc_info=True)
-            return {"status": "error", "message": f"Failed to delete expense: {result.get('error')}"}
+    logging.info(f"expense_id={expense_id}, wedding_id={wedding_id}")
+    logging.debug(f"Attempting to delete expense {expense_id} for wedding {wedding_id}")
+    sql = delete_budget_item_query(expense_id, wedding_id)
+    result = await execute_supabase_sql(sql)
+    if result.get("status") == "success":
+        logging.info(f"Successfully deleted expense: {expense_id}")
+        return {"status": "success", "expense_id": expense_id}
+    else:
+        logging.error(f"Failed to delete expense: {expense_id}. Error: {result.get('error')}", exc_info=True)
+        return {"status": "error", "message": f"Failed to delete expense: {result.get('error')}"}
 
 async def get_all_expenses(wedding_id: str) -> Dict[str, Any]:
     """
     Retrieves a list of all expenses for a given wedding_id.
     """
-    with logger.contextualize(wedding_id=wedding_id):
-        logger.debug(f"Attempting to get all expenses for wedding {wedding_id}")
-        sql = get_all_expenses_query(wedding_id)
-        result = await execute_supabase_sql(sql)
-        if result.get("status") == "success":
-            expenses = result.get("data", [])
-            logger.info(f"Successfully retrieved {len(expenses)} expenses for wedding {wedding_id}")
-            return {"status": "success", "expenses": expenses}
-        else:
-            logger.error(f"Failed to retrieve all expenses for wedding {wedding_id}. Error: {result.get('error')}", exc_info=True)
-            return {"status": "error", "message": f"Failed to retrieve expenses: {result.get('error')}"}
+    logging.info(f"wedding_id={wedding_id}")
+    logging.debug(f"Attempting to get all expenses for wedding {wedding_id}")
+    sql = get_all_expenses_query(wedding_id)
+    result = await execute_supabase_sql(sql)
+    if result.get("status") == "success":
+        expenses = result.get("data", [])
+        logging.info(f"Successfully retrieved {len(expenses)} expenses for wedding {wedding_id}")
+        return {"status": "success", "expenses": expenses}
+    else:
+        logging.error(f"Failed to retrieve all expenses for wedding {wedding_id}. Error: {result.get('error')}", exc_info=True)
+        return {"status": "error", "message": f"Failed to retrieve expenses: {result.get('error')}"}
 
 async def add_expense(
     wedding_id: str,
@@ -121,25 +121,25 @@ async def add_expense(
     """
     Adds a new expense item for a specific wedding_id.
     """
-    with logger.contextualize(wedding_id=wedding_id, item_name=item_name):
-        logger.debug(f"Attempting to add expense '{item_name}' for wedding {wedding_id}")
-        item_id = str(uuid4()) # Generate a new UUID for the item
-        sql = create_budget_item_query(
-            item_id=item_id,
-            wedding_id=wedding_id,
-            item_name=item_name,
-            category=category,
-            amount=amount,
-            vendor_name=vendor_name,
-            contribution_by=contribution_by
-        )
-        result = await execute_supabase_sql(sql)
-        if result.get("status") == "success":
-            logger.info(f"Successfully added expense: {item_name} with ID {item_id}")
-            return {"status": "success", "item_id": item_id}
-        else:
-            logger.error(f"Failed to add expense: {item_name}. Error: {result.get('error')}", exc_info=True)
-            return {"status": "error", "message": f"Failed to add expense: {result.get('error')}"}
+    logging.info(f"wedding_id={wedding_id}, item_name={item_name}")
+    logging.debug(f"Attempting to add expense '{item_name}' for wedding {wedding_id}")
+    item_id = str(uuid4()) # Generate a new UUID for the item
+    sql = create_budget_item_query(
+        item_id=item_id,
+        wedding_id=wedding_id,
+        item_name=item_name,
+        category=category,
+        amount=amount,
+        vendor_name=vendor_name,
+        contribution_by=contribution_by
+    )
+    result = await execute_supabase_sql(sql)
+    if result.get("status") == "success":
+        logging.info(f"Successfully added expense: {item_name} with ID {item_id}")
+        return {"status": "success", "item_id": item_id}
+    else:
+        logging.error(f"Failed to add expense: {item_name}. Error: {result.get('error')}", exc_info=True)
+        return {"status": "error", "message": f"Failed to add expense: {result.get('error')}"}
 
 
 async def upsert_budget_item(
@@ -167,59 +167,59 @@ async def upsert_budget_item(
     Returns:
         A dictionary indicating success or failure.
     """
-    with logger.contextualize(wedding_id=wedding_id, item_name=item_name, category=category):
-        logger.debug(f"Attempting to upsert budget item '{item_name}' (category: {category}) for wedding {wedding_id}")
+    logging.info(f"wedding_id={wedding_id}, item_name={item_name}, category={category}")
+    logging.debug(f"Attempting to upsert budget item '{item_name}' (category: {category}) for wedding {wedding_id}")
+    
+    # First, try to find an existing budget item
+    sql_select = """
+        SELECT item_id FROM budget_items
+        WHERE wedding_id = :wedding_id AND item_name = :item_name AND category = :category;
+    """
+    params_select = {
+        "wedding_id": wedding_id,
+        "item_name": item_name,
+        "category": category
+    }
+    
+    try:
+        result_select = await execute_supabase_sql(sql_select, params_select)
         
-        # First, try to find an existing budget item
-        sql_select = """
-            SELECT item_id FROM budget_items
-            WHERE wedding_id = :wedding_id AND item_name = :item_name AND category = :category;
-        """
-        params_select = {
-            "wedding_id": wedding_id,
-            "item_name": item_name,
-            "category": category
-        }
-        
-        try:
-            result_select = await execute_supabase_sql(sql_select, params_select)
+        if result_select and result_select.get("status") == "success" and result_select.get("data"):
+            # Item exists, update it
+            existing_item_id = result_select["data"][0]["item_id"]
+            logging.info(f"Budget item '{item_name}' (category: {category}) already exists for wedding {wedding_id}. Updating.")
             
-            if result_select and result_select.get("status") == "success" and result_select.get("data"):
-                # Item exists, update it
-                existing_item_id = result_select["data"][0]["item_id"]
-                logger.info(f"Budget item '{item_name}' (category: {category}) already exists for wedding {wedding_id}. Updating.")
-                
-                updates = {
-                    "item_name": item_name, # Include item_name and category in updates to ensure they are set if only amount changes
-                    "category": category,
-                    "amount": amount,
-                    "vendor_name": vendor_name,
-                    "contribution_by": contribution_by,
-                    "status": status
-                }
-                # Filter out None values from updates to avoid overwriting with None if not provided
-                updates = {k: v for k, v in updates.items() if v is not None}
+            updates = {
+                "item_name": item_name, # Include item_name and category in updates to ensure they are set if only amount changes
+                "category": category,
+                "amount": amount,
+                "vendor_name": vendor_name,
+                "contribution_by": contribution_by,
+                "status": status
+            }
+            # Filter out None values from updates to avoid overwriting with None if not provided
+            updates = {k: v for k, v in updates.items() if v is not None}
 
-                return await update_expense(
-                    expense_id=existing_item_id,
-                    wedding_id=wedding_id, # wedding_id is needed by update_expense (though not used in query)
-                    **updates # Pass filtered updates directly
-                )
-            else:
-                # Item does not exist, create a new one
-                logger.info(f"Budget item '{item_name}' (category: {category}) does not exist for wedding {wedding_id}. Creating new.")
-                return await add_expense(
-                    wedding_id=wedding_id,
-                    item_name=item_name,
-                    category=category,
-                    amount=amount,
-                    vendor_name=vendor_name,
-                    contribution_by=contribution_by
-                )
-                
-        except Exception as e:
-            logger.error(f"Error in upsert_budget_item for {item_name} (wedding {wedding_id}): {e}", exc_info=True)
-            return {"status": "error", "message": str(e)}
+            return await update_expense(
+                expense_id=existing_item_id,
+                wedding_id=wedding_id, # wedding_id is needed by update_expense (though not used in query)
+                **updates # Pass filtered updates directly
+            )
+        else:
+            # Item does not exist, create a new one
+            logging.info(f"Budget item '{item_name}' (category: {category}) does not exist for wedding {wedding_id}. Creating new.")
+            return await add_expense(
+                wedding_id=wedding_id,
+                item_name=item_name,
+                category=category,
+                amount=amount,
+                vendor_name=vendor_name,
+                contribution_by=contribution_by
+            )
+            
+    except Exception as e:
+        logging.error(f"Error in upsert_budget_item for {item_name} (wedding {wedding_id}): {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
 
 async def code_execution_tool(code: str, language: str) -> Dict[str, Any]:
     """
@@ -228,36 +228,36 @@ async def code_execution_tool(code: str, language: str) -> Dict[str, Any]:
     For other languages, it indicates that execution is not fully supported.
     Captures and returns stdout/stderr.
     """
-    with logger.contextualize(language=language):
-        logger.info(f"Attempting to execute code in {language}...")
-        if language.lower() == "python":
-            try:
-                with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".py") as temp_file:
-                    temp_file.write(code)
-                    temp_file_path = temp_file.name
-                
-                process = subprocess.run(
-                    ["python", temp_file_path],
-                    capture_output=True,
-                    text=True,
-                    check=False
-                )
-                
-                os.remove(temp_file_path) # Clean up the temporary file
+    logging.info(f"language={language}")
+    logging.info(f"Attempting to execute code in {language}...")
+    if language.lower() == "python":
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".py") as temp_file:
+                temp_file.write(code)
+                temp_file_path = temp_file.name
+            
+            process = subprocess.run(
+                ["python", temp_file_path],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            
+            os.remove(temp_file_path) # Clean up the temporary file
 
-                if process.returncode == 0:
-                    logger.info("Code executed successfully.")
-                    return {"status": "success", "stdout": process.stdout, "stderr": process.stderr}
-                else:
-                    logger.error(f"Code execution failed with errors: {process.stderr}")
-                    return {"status": "error", "stdout": process.stdout, "stderr": process.stderr}
-            except Exception as e:
-                logger.error(f"An unexpected error occurred during Python code execution: {e}", exc_info=True)
-                return {"status": "error", "message": f"An unexpected error occurred: {e}"}
-        else:
-            message = f"Code execution for language '{language}' is not fully supported in this simulated environment."
-            logger.warning(message)
-            return {"status": "error", "message": message, "stdout": "", "stderr": ""}
+            if process.returncode == 0:
+                logging.info("Code executed successfully.")
+                return {"status": "success", "stdout": process.stdout, "stderr": process.stderr}
+            else:
+                logging.error(f"Code execution failed with errors: {process.stderr}")
+                return {"status": "error", "stdout": process.stdout, "stderr": process.stderr}
+        except Exception as e:
+            logging.error(f"An unexpected error occurred during Python code execution: {e}", exc_info=True)
+            return {"status": "error", "message": f"An unexpected error occurred: {e}"}
+    else:
+        message = f"Code execution for language '{language}' is not fully supported in this simulated environment."
+        logging.warning(message)
+        return {"status": "error", "message": message, "stdout": "", "stderr": ""}
 
 if __name__ == "__main__":
     import asyncio
@@ -315,14 +315,14 @@ if __name__ == "__main__":
         # else:
         #     print(f"Failed to get all expenses: {result_get_all['message']}")
 
-        # Test get_budget
-        print("\nTesting get_budget...")
-        result_get_budget = await get_budget(wedding_id)
-        print(f"get_budget result: {result_get_budget}")
-        if result_get_budget["status"] == "success":
-            print(f"Total budget for wedding {wedding_id}: {result_get_budget}")
-        else:
-            print(f"Failed to get budget: {result_get_budget['message']}")
+        # # Test get_budget
+        # print("\nTesting get_budget...")
+        # result_get_budget = await get_budget(wedding_id)
+        # print(f"get_budget result: {result_get_budget}")
+        # if result_get_budget["status"] == "success":
+        #     print(f"Total budget for wedding {wedding_id}: {result_get_budget}")
+        # else:
+        #     print(f"Failed to get budget: {result_get_budget['message']}")
 
         # # Test update_expense
         # print(f"\nTesting update_expense for ID: {expense_id_1}...")

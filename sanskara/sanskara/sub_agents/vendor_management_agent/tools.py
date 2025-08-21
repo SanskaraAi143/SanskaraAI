@@ -7,7 +7,7 @@ from sanskara.db_queries import (
     create_booking_query,
     submit_review_query
 )
-from logger import json_logger as logger # Import the custom JSON logger
+import logging # Import the custom JSON logger
 from sanskara.helpers import execute_supabase_sql
 import asyncio
 
@@ -22,26 +22,26 @@ def search_vendors(category: str, city: str, budget_range: Optional[Dict[str, fl
     Returns:
         List[Dict[str, Any]]: A list of dictionaries, each representing a vendor with their ID, name, and rating.
     """
-    with logger.contextualize(tool_name="search_vendors", category=category, city=city, budget_range=budget_range, style_keywords=style_keywords):
-        logger.debug(f"Entering search_vendors tool with category: {category}, city: {city}.")
-        try:
-            sql_query = search_vendors_query(
-                category=category,
-                city=city,
-                budget_range=budget_range,
-                style_keywords=style_keywords
-            )
-            result = asyncio.run(execute_supabase_sql(sql_query))
-            
-            if result.get("status") == "success" and result.get("data"):
-                vendors = [{"vendor_id": vendor["vendor_id"], "name": vendor["vendor_name"], "rating": vendor.get("rating")} for vendor in result["data"]]
-                logger.info(f"Found {len(vendors)} vendors for category: {category} in {city}.")
-                return vendors
-            logger.info(f"No vendors found for category: {category} in {city}.")
-            return []
-        except Exception as e:
-            logger.error(f"Error in search_vendors: {e}", exc_info=True)
-            return []
+    logging.info(f"tool_name='search_vendors', category={category}, city={city}, budget_range={budget_range}, style_keywords={style_keywords}")
+    logging.debug(f"Entering search_vendors tool with category: {category}, city: {city}.")
+    try:
+        sql_query = search_vendors_query(
+            category=category,
+            city=city,
+            budget_range=budget_range,
+            style_keywords=style_keywords
+        )
+        result = asyncio.run(execute_supabase_sql(sql_query))
+        
+        if result.get("status") == "success" and result.get("data"):
+            vendors = [{"vendor_id": vendor["vendor_id"], "name": vendor["vendor_name"], "rating": vendor.get("rating")} for vendor in result["data"]]
+            logging.info(f"Found {len(vendors)} vendors for category: {category} in {city}.")
+            return vendors
+        logging.info(f"No vendors found for category: {category} in {city}.")
+        return []
+    except Exception as e:
+        logging.error(f"Error in search_vendors: {e}", exc_info=True)
+        return []
 
 
 def get_vendor_details(vendor_id: str) -> Dict[str, Any]:
@@ -52,20 +52,20 @@ def get_vendor_details(vendor_id: str) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: A dictionary containing all details of the vendor.
     """
-    with logger.contextualize(tool_name="get_vendor_details", vendor_id=vendor_id):
-        logger.debug(f"Entering get_vendor_details tool for vendor_id: {vendor_id}.")
-        try:
-            sql_query = get_vendor_details_query(vendor_id=vendor_id)
-            result = asyncio.run(execute_supabase_sql(sql_query))
-            if result.get("status") == "success" and result.get("data"):
-                vendor_details = result["data"][0] # Assuming vendor_id is unique
-                logger.info(f"Successfully retrieved details for vendor_id: {vendor_id}.")
-                return vendor_details
-            logger.warning(f"No details found for vendor_id: {vendor_id}.")
-            return {}
-        except Exception as e:
-            logger.error(f"Error in get_vendor_details for vendor_id: {vendor_id}: {e}", exc_info=True)
-            return {}
+    logging.info(f"tool_name='get_vendor_details', vendor_id={vendor_id}")
+    logging.debug(f"Entering get_vendor_details tool for vendor_id: {vendor_id}.")
+    try:
+        sql_query = get_vendor_details_query(vendor_id=vendor_id)
+        result = asyncio.run(execute_supabase_sql(sql_query))
+        if result.get("status") == "success" and result.get("data"):
+            vendor_details = result["data"][0] # Assuming vendor_id is unique
+            logging.info(f"Successfully retrieved details for vendor_id: {vendor_id}.")
+            return vendor_details
+        logging.warning(f"No details found for vendor_id: {vendor_id}.")
+        return {}
+    except Exception as e:
+        logging.error(f"Error in get_vendor_details for vendor_id: {vendor_id}: {e}", exc_info=True)
+        return {}
 
 
 def add_to_shortlist(wedding_id: str, linked_vendor_id: str, vendor_name: str, vendor_category: str) -> Dict[str, str]:
@@ -79,25 +79,25 @@ def add_to_shortlist(wedding_id: str, linked_vendor_id: str, vendor_name: str, v
     Returns:
         Dict[str, str]: A dictionary indicating the status of the operation.
     """
-    with logger.contextualize(tool_name="add_to_shortlist", wedding_id=wedding_id, linked_vendor_id=linked_vendor_id):
-        logger.debug(f"Entering add_to_shortlist tool for wedding_id: {wedding_id}, linked_vendor_id: {linked_vendor_id}.")
-        try:
-            sql_query = add_to_shortlist_query(
-                wedding_id=wedding_id,
-                linked_vendor_id=linked_vendor_id,
-                vendor_name=vendor_name,
-                vendor_category=vendor_category
-            )
-            result = asyncio.run(execute_supabase_sql(sql_query))
-            if result.get("status") == "success" and result.get("data"):
-                user_vendor_id = result["data"][0].get("user_vendor_id")
-                logger.info(f"Successfully added vendor {vendor_name} to shortlist for wedding {wedding_id}. UserVendorID: {user_vendor_id}")
-                return {"status": "success", "user_vendor_id": user_vendor_id}
-            logger.error(f"Failed to add vendor {vendor_name} to shortlist for wedding {wedding_id}. Result: {result}")
-            return {"status": "failure"}
-        except Exception as e:
-            logger.error(f"Error in add_to_shortlist for wedding {wedding_id}, vendor {linked_vendor_id}: {e}", exc_info=True)
-            return {"status": "failure", "message": "An unexpected error occurred during shortlisting."}
+    logging.info(f"tool_name='add_to_shortlist', wedding_id={wedding_id}, linked_vendor_id={linked_vendor_id}")
+    logging.debug(f"Entering add_to_shortlist tool for wedding_id: {wedding_id}, linked_vendor_id: {linked_vendor_id}.")
+    try:
+        sql_query = add_to_shortlist_query(
+            wedding_id=wedding_id,
+            linked_vendor_id=linked_vendor_id,
+            vendor_name=vendor_name,
+            vendor_category=vendor_category
+        )
+        result = asyncio.run(execute_supabase_sql(sql_query))
+        if result.get("status") == "success" and result.get("data"):
+            user_vendor_id = result["data"][0].get("user_vendor_id")
+            logging.info(f"Successfully added vendor {vendor_name} to shortlist for wedding {wedding_id}. UserVendorID: {user_vendor_id}")
+            return {"status": "success", "user_vendor_id": user_vendor_id}
+        logging.error(f"Failed to add vendor {vendor_name} to shortlist for wedding {wedding_id}. Result: {result}")
+        return {"status": "failure"}
+    except Exception as e:
+        logging.error(f"Error in add_to_shortlist for wedding {wedding_id}, vendor {linked_vendor_id}: {e}", exc_info=True)
+        return {"status": "failure", "message": "An unexpected error occurred during shortlisting."}
 
 
 def create_booking(user_id: str, vendor_id: str, event_date: str, total_amount: float, advance_amount_due: float = 0.0, paid_amount: float = 0.0, booking_status: str = 'pending_confirmation') -> Dict[str, str]:
@@ -115,28 +115,28 @@ def create_booking(user_id: str, vendor_id: str, event_date: str, total_amount: 
     Returns:
         Dict[str, str]: A dictionary indicating the booking ID or status.
     """
-    with logger.contextualize(tool_name="create_booking", wedding_id=wedding_id, user_id=user_id, vendor_id=vendor_id):
-        logger.debug(f"Entering create_booking tool for wedding_id: {wedding_id}, vendor_id: {vendor_id}.")
-        try:
-            sql_query = create_booking_query(
-                user_id=user_id,
-                vendor_id=vendor_id,
-                event_date=event_date,
-                total_amount=total_amount,
-                advance_amount_due=advance_amount_due,
-                paid_amount=paid_amount,
-                booking_status=booking_status
-            )
-            result = asyncio.run(execute_supabase_sql(sql_query))
-            if result.get("status") == "success" and result.get("data"):
-                booking_id = result["data"][0].get("booking_id")
-                logger.info(f"Successfully created booking for vendor {vendor_id} for wedding {wedding_id}. Booking ID: {booking_id}")
-                return {"booking_id": booking_id}
-            logger.error(f"Failed to create booking for vendor {vendor_id} for wedding {wedding_id}. Result: {result}")
-            return {"status": "failure"}
-        except Exception as e:
-            logger.error(f"Error in create_booking for wedding {wedding_id}, vendor {vendor_id}: {e}", exc_info=True)
-            return {"status": "failure", "message": "An unexpected error occurred during booking creation."}
+    logging.info(f"tool_name='create_booking', wedding_id={wedding_id}, user_id={user_id}, vendor_id={vendor_id}")
+    logging.debug(f"Entering create_booking tool for wedding_id: {wedding_id}, vendor_id: {vendor_id}.")
+    try:
+        sql_query = create_booking_query(
+            user_id=user_id,
+            vendor_id=vendor_id,
+            event_date=event_date,
+            total_amount=total_amount,
+            advance_amount_due=advance_amount_due,
+            paid_amount=paid_amount,
+            booking_status=booking_status
+        )
+        result = asyncio.run(execute_supabase_sql(sql_query))
+        if result.get("status") == "success" and result.get("data"):
+            booking_id = result["data"][0].get("booking_id")
+            logging.info(f"Successfully created booking for vendor {vendor_id} for wedding {wedding_id}. Booking ID: {booking_id}")
+            return {"booking_id": booking_id}
+        logging.error(f"Failed to create booking for vendor {vendor_id} for wedding {wedding_id}. Result: {result}")
+        return {"status": "failure"}
+    except Exception as e:
+        logging.error(f"Error in create_booking for wedding {wedding_id}, vendor {vendor_id}: {e}", exc_info=True)
+        return {"status": "failure", "message": "An unexpected error occurred during booking creation."}
 
 
 def submit_review(booking_id: str, user_id: str, vendor_id: str, rating: float, comment: str) -> Dict[str, str]:
@@ -151,26 +151,26 @@ def submit_review(booking_id: str, user_id: str, vendor_id: str, rating: float, 
     Returns:
         Dict[str, str]: A dictionary indicating the review ID or status.
     """
-    with logger.contextualize(tool_name="submit_review", booking_id=booking_id, user_id=user_id, rating=rating):
-        logger.debug(f"Entering submit_review tool for booking_id: {booking_id}, user_id: {user_id}, rating: {rating}.")
-        try:
-            sql_query = submit_review_query(
-                booking_id=booking_id,
-                user_id=user_id,
-                vendor_id=vendor_id,
-                rating=rating,
-                comment=comment
-            )
-            result = asyncio.run(execute_supabase_sql(sql_query))
-            if result.get("status") == "success" and result.get("data"):
-                review_id = result["data"][0].get("review_id")
-                logger.info(f"Successfully submitted review for booking {booking_id} by user {user_id}. Review ID: {review_id}")
-                return {"review_id": review_id}
-            logger.error(f"Failed to submit review for booking {booking_id} by user {user_id}. Result: {result}")
-            return {"status": "failure"}
-        except Exception as e:
-            logger.error(f"Error in submit_review for booking {booking_id}, user {user_id}: {e}", exc_info=True)
-            return {"status": "failure", "message": "An unexpected error occurred during review submission."}
+    logging.info(f"tool_name='submit_review', booking_id={booking_id}, user_id={user_id}, rating={rating}")
+    logging.debug(f"Entering submit_review tool for booking_id: {booking_id}, user_id: {user_id}, rating: {rating}.")
+    try:
+        sql_query = submit_review_query(
+            booking_id=booking_id,
+            user_id=user_id,
+            vendor_id=vendor_id,
+            rating=rating,
+            comment=comment
+        )
+        result = asyncio.run(execute_supabase_sql(sql_query))
+        if result.get("status") == "success" and result.get("data"):
+            review_id = result["data"][0].get("review_id")
+            logging.info(f"Successfully submitted review for booking {booking_id} by user {user_id}. Review ID: {review_id}")
+            return {"review_id": review_id}
+        logging.error(f"Failed to submit review for booking {booking_id} by user {user_id}. Result: {result}")
+        return {"status": "failure"}
+    except Exception as e:
+        logging.error(f"Error in submit_review for booking {booking_id}, user {user_id}: {e}", exc_info=True)
+        return {"status": "failure", "message": "An unexpected error occurred during review submission."}
 
 
 if __name__ == "__main__":
@@ -215,6 +215,6 @@ if __name__ == "__main__":
         # )
         # print(f"Found Vendors: {vendors}")
     except Exception as e:
-        logger.error(f"An error occurred during testing: {e}", exc_info=True)
+        logging.error(f"An error occurred during testing: {e}", exc_info=True)
     finally:
-        logger.info("Vendor management agent tests completed.")
+        logging.info("Vendor management agent tests completed.")

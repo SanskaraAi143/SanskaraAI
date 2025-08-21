@@ -4,13 +4,13 @@ from sanskara.helpers import execute_supabase_sql
 import sanskara.db_queries as db_queries
 from api.weddings.models import WeddingDetailsResponse, WeddingUpdate
 from datetime import date
-from logger import json_logger as logger # Import the custom JSON logger
+import logging # Import the custom JSON logger
 
 weddings_router = APIRouter()
 
 @weddings_router.get("/{weddingId}", response_model=WeddingDetailsResponse)
 async def get_wedding_details(weddingId: str):
-    logger.info(f"Received request for wedding details for wedding_id: {weddingId}")
+    logging.info(f"Received request for wedding details for wedding_id: {weddingId}")
     
     wedding_query = await execute_supabase_sql(db_queries.get_wedding_details_query(weddingId))
     wedding_data = wedding_query.get("data")
@@ -33,7 +33,7 @@ async def get_wedding_details(weddingId: str):
 @weddings_router.put("/{weddingId}", response_model=WeddingDetailsResponse)
 @weddings_router.patch("/{weddingId}", response_model=WeddingDetailsResponse)
 async def update_wedding_details(weddingId: str, wedding_update: WeddingUpdate):
-    logger.info(f"Received update request for wedding_id: {weddingId} with data: {wedding_update.model_dump_json()}")
+    logging.info(f"Received update request for wedding_id: {weddingId} with data: {wedding_update.model_dump_json()}")
 
     updates = {}
     if wedding_update.wedding_name is not None:
@@ -53,7 +53,7 @@ async def update_wedding_details(weddingId: str, wedding_update: WeddingUpdate):
         update_fields_sql = db_queries.update_wedding_fields_query(weddingId, updates)
         update_result = await execute_supabase_sql(update_fields_sql)
         if update_result.get("status") == "error":
-            logger.error(f"Failed to update wedding fields: {update_result.get('error')}")
+            logging.error(f"Failed to update wedding fields: {update_result.get('error')}")
             raise HTTPException(status_code=500, detail="Failed to update wedding details.")
 
     if wedding_update.details is not None:
@@ -69,7 +69,7 @@ async def update_wedding_details(weddingId: str, wedding_update: WeddingUpdate):
         update_details_sql = db_queries.update_wedding_details_jsonb_query(weddingId, merged_details)
         update_result = await execute_supabase_sql(update_details_sql)
         if update_result.get("status") == "error":
-            logger.error(f"Failed to update wedding details JSONB: {update_result.get('error')}")
+            logging.error(f"Failed to update wedding details JSONB: {update_result.get('error')}")
             raise HTTPException(status_code=500, detail="Failed to update wedding details.")
     
     # Retrieve and return the updated wedding details

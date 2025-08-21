@@ -19,12 +19,9 @@ if ARIZE_SPACE_ID and ARIZE_API_KEY:
             project_name=ARIZE_PROJECT_NAME,
         )
     except Exception as e:  # pragma: no cover
-        # Fallback: continue without tracing if registration fails
-        from logger import json_logger as _tmp_logger
-        _tmp_logger.warning(f"Arize tracing disabled (registration failed): {e}")
+        logging.warning(f"Arize tracing disabled (registration failed): {e}")
 else:
-    from logger import json_logger as _tmp_logger
-    _tmp_logger.warning("Arize tracing disabled (ARIZE_SPACE_ID / ARIZE_API_KEY not set)")
+    logging.warning("Arize tracing disabled (ARIZE_SPACE_ID / ARIZE_API_KEY not set)")
 
 # Import and configure the automatic instrumentor from OpenInference
 from openinference.instrumentation.google_adk import GoogleADKInstrumentor
@@ -35,25 +32,26 @@ import nest_asyncio
 nest_asyncio.apply()
 
 
-from logger import json_logger as logger # Import the custom JSON logger
+import logging
+try:
+    from logging_setup import setup_logging
+except ImportError:
+    from sanskara.logging_setup import setup_logging
 from api.app import app
 from api.onboarding.routes import onboarding_router
 from api.weddings.routes import weddings_router
 from agent_websocket.service import websocket_endpoint
 
-import logging
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
-)
+# Configure root logging once (respects LOG_LEVEL env). If you want file logging,
+# set LOG_LEVEL and let uvicorn or the env control handlers, or extend setup_logging.
+setup_logging()
 # AGENTOPS_API_KEY = os.getenv("AGENTOPS_API_KEY")
 # agentops.init(
 #     api_key=AGENTOPS_API_KEY,
 #     default_tags=['google adk']
 # )
 
-logger.info("Application starting up...") # Log application startup
+logging.info("Application starting up...") # Log application startup
 
 # Include routers
 app.include_router(onboarding_router, prefix="/onboarding", tags=["Onboarding"])
@@ -63,5 +61,5 @@ app.include_router(weddings_router, prefix="/weddings", tags=["Weddings"])
 app.websocket("/ws")(websocket_endpoint)
 
 if __name__ == "__main__":
-    with logger.contextualize(agent_name="OrchestratorAgent"):
-        uvicorn.run(app, host="0.0.0.0", port=8765)
+    logging.info(f"agent_name='OrchestratorAgent'")
+    uvicorn.run(app, host="0.0.0.0", port=8765)

@@ -10,7 +10,7 @@ from sanskara.sub_agents.guest_and_communication_agent.tools import (
 from sanskara.sub_agents.guest_and_communication_agent.prompt import (
     GUEST_AND_COMMUNICATION_AGENT_PROMPT,
 )
-from logger import json_logger as logger # Import the custom JSON logger
+import logging # Import the custom JSON logger
 
 
 guest_and_communication_agent = LlmAgent(
@@ -25,4 +25,4 @@ guest_and_communication_agent = LlmAgent(
         send_whatsapp_message,
     ],
 )
-logger.info("GuestAndCommunicationAgent initialized.")
+logging.info("GuestAndCommunicationAgent initialized.")

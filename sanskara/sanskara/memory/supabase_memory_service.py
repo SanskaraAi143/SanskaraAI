@@ -12,13 +12,12 @@ from google.adk.sessions import Session
 from sanskara.helpers import execute_supabase_sql,sql_quote_value
 from google.genai import types  # for Content/Part classes
 
-logger = logging.getLogger(__name__)
 
 # Load a CPU‐optimized static embedding model once
 EMBED_MODEL_NAME = "sentence-transformers/static-retrieval-mrl-en-v1"
 _EMBED_MODEL = SentenceTransformer(EMBED_MODEL_NAME, device="cpu")  # CPU only
 _EMBED_DIM = _EMBED_MODEL.get_sentence_embedding_dimension()
-logger.info(f"SupabaseMemoryService: Loaded embedding model '{EMBED_MODEL_NAME}' with dim={_EMBED_DIM}")
+logging.info(f"SupabaseMemoryService: Loaded embedding model '{EMBED_MODEL_NAME}' with dim={_EMBED_DIM}")
 
 class SupabaseMemoryService(BaseMemoryService):
     """Memory service using Supabase + pgvector + local CPU embeddings."""
@@ -44,7 +43,7 @@ class SupabaseMemoryService(BaseMemoryService):
             )
 
         if not rows:
-            logger.info("No events to add to memory.")
+            logging.info("No events to add to memory.")
             return
 
         sql = (
@@ -54,9 +53,9 @@ class SupabaseMemoryService(BaseMemoryService):
         )
         res = await execute_supabase_sql(sql)
         if res.get("status") != "success":
-            logger.error("Insert failed: %s", res.get("error"))
+            logging.error("Insert failed: %s", res.get("error"))
         else:
-            logger.info("Inserted %d memory rows.", len(rows))
+            logging.info("Inserted %d memory rows.", len(rows))
 
     async def add_text_to_memory(self, *, app_name: str, user_id: str, text: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Add a single text memory with embedding. Stores metadata inside content JSON for traceability."""
@@ -75,7 +74,7 @@ class SupabaseMemoryService(BaseMemoryService):
             )
             await execute_supabase_sql(sql)
         except Exception as e:
-            logger.warning(f"add_text_to_memory failed: {e}")
+            logging.warning(f"add_text_to_memory failed: {e}")
 
     @override
     async def search_memory(
@@ -96,7 +95,7 @@ class SupabaseMemoryService(BaseMemoryService):
         )
         res = await execute_supabase_sql(sql)
         if res.get("status") != "success":
-            logger.error("Search failed: %s", res.get("error"))
+            logging.error("Search failed: %s", res.get("error"))
             return SearchMemoryResponse()
 
         memories: List[MemoryEntry] = []

@@ -19,7 +19,7 @@ load_dotenv()
 # Import common components
 from common import (
     BaseWebSocketServer,
-    logger,
+    logging,
     MODEL,
     VOICE_NAME,
     SEND_SAMPLE_RATE,
@@ -36,7 +36,7 @@ def todo_tasks_wedding_tool(request:dict) -> dict:
             dict: A dictionary containing the status of the wedding tasks.
         Updates the wedding tasks status to the file."""
     # This is a mock implementation, replace with actual logic
-    logger.info(f"Received request for wedding tasks: {request}")
+    logging.info(f"Received request for wedding tasks: {request}")
     file_name = "wedding_tasks.json"
     if not os.path.exists(file_name):
         # Create an empty file if it doesn't exist
@@ -48,7 +48,7 @@ def todo_tasks_wedding_tool(request:dict) -> dict:
         tasks.append(request)
         f.seek(0)
         json.dump(tasks, f, indent=4)
-    logger.info(f"Wedding tasks updated: {tasks}")
+    logging.info(f"Wedding tasks updated: {tasks}")
     # Return a success message
     return {"status": "success", "message": f"Wedding tasks updated"}
 
@@ -135,15 +135,15 @@ class MultimodalADKServer(BaseWebSocketServer):
 
                         elif data.get("type") == "end":
                             # Client is done sending audio for this turn
-                            logger.info("Received end signal from client")
+                            logging.info("Received end signal from client")
                         elif data.get("type") == "text":
                             # Handle text messages (not implemented in this simple version)
-                            logger.info(f"Received text: {data.get('data')}")
+                            logging.info(f"Received text: {data.get('data')}")
                             await text_queue.put({"data": data.get("data")})
                     except json.JSONDecodeError:
-                        logger.error("Invalid JSON message received")
+                        logging.error("Invalid JSON message received")
                     except Exception as e:
-                        logger.error(f"Error processing message: {e}")
+                        logging.error(f"Error processing message: {e}")
 
             # Task to process and send audio to Gemini via ADK
             async def process_and_send_audio():
@@ -169,7 +169,7 @@ class MultimodalADKServer(BaseWebSocketServer):
                     video_bytes = video_data.get("data")
                     video_mode = video_data.get("mode", "webcam")
 
-                    logger.info(f"Processing video frame from {video_mode}")
+                    logging.info(f"Processing video frame from {video_mode}")
 
                     # Send the video frame to Gemini through ADK
                     live_request_queue.send_realtime(
@@ -185,7 +185,7 @@ class MultimodalADKServer(BaseWebSocketServer):
             async def handle_text_messages():
                 while True:
                     text_data = await text_queue.get()
-                    logger.info(f"Processing text message: {text_data}")
+                    logging.info(f"Processing text message: {text_data}")
                     text_content = text_data.get("data", "")
                     if text_content:
                         # Send the text content to Gemini
@@ -221,7 +221,7 @@ class MultimodalADKServer(BaseWebSocketServer):
                         update = event.session_resumption_update
                         if update.resumable and update.new_handle:
                             current_session_id = update.new_handle
-                            logger.info(f"New SESSION: {current_session_id}")
+                            logging.info(f"New SESSION: {current_session_id}")
                             # Send session ID to client
                             session_id_msg = json.dumps({
                                 "type": "session_id", 
@@ -258,7 +258,7 @@ class MultimodalADKServer(BaseWebSocketServer):
 
                     # Check for interruption
                     if event.interrupted and not interrupted:
-                        logger.info("🤐 INTERRUPTION DETECTED")
+                        logging.info("🤐 INTERRUPTION DETECTED")
                         await websocket.send(json.dumps({
                             "type": "interrupted",
                             "data": "Response interrupted by user input"
@@ -269,7 +269,7 @@ class MultimodalADKServer(BaseWebSocketServer):
                     if event.turn_complete:
                         # Only send turn_complete if there was no interruption
                         if not interrupted:
-                            logger.info("✅ Gemini done talking")
+                            logging.info("✅ Gemini done talking")
                             await websocket.send(json.dumps({
                                 "type": "turn_complete",
                                 "session_id": current_session_id
@@ -279,10 +279,10 @@ class MultimodalADKServer(BaseWebSocketServer):
                         if input_texts:
                             # Get unique texts to prevent duplication
                             unique_texts = list(dict.fromkeys(input_texts))
-                            logger.info(f"Input transcription: {' '.join(unique_texts)}")
+                            logging.info(f"Input transcription: {' '.join(unique_texts)}")
                             # send transcription to client as user_input
                             # unique_texts = list(dict.fromkeys(input_texts))
-                            # logger.info(f"Input transcription: {' '.join(unique_texts)}")
+                            # logging.info(f"Input transcription: {' '.join(unique_texts)}")
                             # await websocket.send(json.dumps({
                             #     "type": "user_input",
                             #     "data": " ".join(unique_texts)
@@ -290,7 +290,7 @@ class MultimodalADKServer(BaseWebSocketServer):
                         if output_texts:
                             # Get unique texts to prevent duplication
                             unique_texts = list(dict.fromkeys(output_texts))
-                            logger.info(f"Output transcription: {' '.join(unique_texts)}")
+                            logging.info(f"Output transcription: {' '.join(unique_texts)}")
 
                         # Reset for next turn
                         input_texts = []
@@ -315,8 +315,8 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Exiting application via KeyboardInterrupt...")
+        logging.info("Exiting application via KeyboardInterrupt...")
     except Exception as e:
-        logger.error(f"Unhandled exception in main: {e}")
+        logging.error(f"Unhandled exception in main: {e}")
         import traceback
         traceback.print_exc()

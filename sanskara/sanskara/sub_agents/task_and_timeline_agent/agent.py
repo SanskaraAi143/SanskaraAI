@@ -9,7 +9,7 @@ from sanskara.sub_agents.task_and_timeline_agent.tools import (
 from sanskara.sub_agents.task_and_timeline_agent.prompt import (
     TASK_AND_TIMELINE_AGENT_PROMPT,
 )
-from logger import json_logger as logger # Import the custom JSON logger
+import logging # Import the custom JSON logger
 
 
 task_and_timeline_agent = LlmAgent(
@@ -25,4 +25,4 @@ task_and_timeline_agent = LlmAgent(
         create_timeline_event,
     ],
 )
-logger.info("TaskAndTimelineAgent initialized.")
+logging.info("TaskAndTimelineAgent initialized.")

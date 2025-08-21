@@ -2,7 +2,7 @@ from google.adk.agents import LlmAgent
 from google.adk.planners.plan_re_act_planner import PlanReActPlanner
 from google.genai import types
 from sanskara.sub_agents.google_search_agent.prompt import GOOGLE_SEARCH_AGENT_PROMPT
-from logger import json_logger as logger # Import the custom JSON logger
+import logging # Import the custom JSON logger
 
 # This is google search tool agent which gets context from google search 
 from google.adk.tools import google_search
@@ -18,4 +18,4 @@ google_search_agent = LlmAgent(
        
     ],
 )
-logger.info("GoogleSearchAgent initialized.")
+logging.info("GoogleSearchAgent initialized.")

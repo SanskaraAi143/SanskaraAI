@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import asyncio
 from typing import Any, Dict, List, Optional
 
-from logger import json_logger as logger
+import logging
 from sanskara.helpers import execute_supabase_sql
 
 
@@ -92,7 +92,7 @@ async def _get_core_context(wedding_id: str, user_id: str) -> Dict[str, Any]:
                 "user_email": row.get("user_email"),
             }
     except Exception as e:
-        logger.warning(f"_get_core_context failed: {e}")
+        logging.warning(f"_get_core_context failed: {e}")
     return {
         "wedding_data": {},
         "current_wedding_id": wedding_id,
@@ -128,7 +128,7 @@ async def _get_tasks_and_workflows(wedding_id: str) -> Dict[str, Any]:
                 "relevant_tasks": row.get("relevant_tasks", []),
             }
     except Exception as e:
-        logger.debug(f"_get_tasks_and_workflows failed: {e}")
+        logging.debug(f"_get_tasks_and_workflows failed: {e}")
     return {"active_workflows": [], "relevant_tasks": []}
 
 
@@ -174,7 +174,7 @@ async def _get_budget_summaries(wedding_id: str) -> Dict[str, Any]:
                 },
             }
     except Exception as e:
-        logger.debug(f"_get_budget_summaries failed: {e}")
+        logging.debug(f"_get_budget_summaries failed: {e}")
     return {
         "budget_summary": {"total_budget": 0, "total_spent": 0, "pending_amount": 0, "total_items": 0},
         "budget_totals": {"total_budget": 0, "total_spent": 0, "remaining_budget": 0},
@@ -243,7 +243,7 @@ async def _get_timeline_and_deadlines(wedding_id: str) -> Dict[str, Any]:
                 },
             }
     except Exception as e:
-        logger.debug(f"_get_timeline_and_deadlines failed: {e}")
+        logging.debug(f"_get_timeline_and_deadlines failed: {e}")
     return {
         "upcoming_events": [],
         "overdue_tasks": [],
@@ -265,7 +265,7 @@ async def _get_shortlisted_vendors(wedding_id: str) -> Dict[str, Any]:
         if res.get("status") == "success" and res.get("data") is not None:
             return {"shortlisted_vendors": res.get("data", [])}
     except Exception as e:
-        logger.debug(f"_get_shortlisted_vendors failed: {e}")
+        logging.debug(f"_get_shortlisted_vendors failed: {e}")
     return {"shortlisted_vendors": []}
 
 
@@ -300,7 +300,7 @@ async def _get_pending_actions(wedding_id: str, user_role: Optional[str]) -> Dic
                 }
             }
     except Exception as e:
-        logger.debug(f"_get_pending_actions failed: {e}")
+        logging.debug(f"_get_pending_actions failed: {e}")
     return {"pending_actions": {"pending_reviews": [], "awaiting_workflows": []}}
 
 
@@ -326,7 +326,7 @@ async def assemble_baseline_context(
         )
         ctx: Dict[str, Any] = {**defaults, **core, **tw, **budget, **timebox, **vendors, **pending}
     except Exception as e:
-        logger.error(f"assemble_baseline_context failed (falling back to defaults): {e}")
+        logging.error(f"assemble_baseline_context failed (falling back to defaults): {e}")
         ctx = defaults
 
     # Cap lists to avoid prompt bloat
@@ -346,7 +346,7 @@ async def assemble_baseline_context(
             if isinstance(ctx.get(k), list) and len(ctx[k]) > limit:
                 ctx[k] = ctx[k][:limit]
     except Exception as e:
-        logger.debug(f"assemble_baseline_context capping failed: {e}")
+        logging.debug(f"assemble_baseline_context capping failed: {e}")
     return ctx
 
 

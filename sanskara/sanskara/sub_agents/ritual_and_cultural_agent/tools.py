@@ -6,7 +6,7 @@ from unittest import result
 from sanskara.db import astra_db
 import json
 import asyncio
-from logger import json_logger as logger
+import logging
 
 
 from typing import Union, List, Dict, Any, Optional  # Add Union to imports
@@ -108,77 +108,77 @@ async def get_ritual_information(query: str, limit: int = 3) -> Union[str, List[
         ```python
         # Example 1: Search for general ritual information
         info = await get_ritual_information("What is the significance of the Haldi ceremony?")
-        logger.info(info)
+        logging.info(info)
         ```
     """
-    with logger.contextualize(query=query):
-        logger.debug(f"Attempting to retrieve ritual information for query: '{query}'")
-        if not query or not isinstance(query, str):
-            msg = "Invalid input: 'query' must be a non-empty string."
-            logger.error(f"get_ritual_information: {msg}")
-            return f"Error: {msg}"
-        
-        if not isinstance(limit, int) or limit <= 0:
-            msg = "Invalid input: 'limit' must be a positive integer."
-            logger.error(f"get_ritual_information: {msg}")
-            return f"Error: {msg}"
+    logging.info(f"query={query}")
+    logging.debug(f"Attempting to retrieve ritual information for query: '{query}'")
+    if not query or not isinstance(query, str):
+        msg = "Invalid input: 'query' must be a non-empty string."
+        logging.error(f"get_ritual_information: {msg}")
+        return f"Error: {msg}"
+    
+    if not isinstance(limit, int) or limit <= 0:
+        msg = "Invalid input: 'limit' must be a positive integer."
+        logging.error(f"get_ritual_information: {msg}")
+        return f"Error: {msg}"
 
-        if astra_db is None:
-            msg = "Astra DB client is not initialized. Check environment variables (ASTRA_API_TOKEN, ASTRA_API_ENDPOINT) and config."
-            logger.error(f"get_ritual_information: {msg}")
-            return f"Error: {msg}"
+    if astra_db is None:
+        msg = "Astra DB client is not initialized. Check environment variables (ASTRA_API_TOKEN, ASTRA_API_ENDPOINT) and config."
+        logging.error(f"get_ritual_information: {msg}")
+        return f"Error: {msg}"
 
-        # Retry with exponential backoff for transient errors (e.g., 5xx/connection)
-        attempts = 0
-        base_delay = 0.5
-        last_exc: Optional[Exception] = None
-        while attempts < 3:
-            try:
-                ritual_data_collection = astra_db.get_collection("ritual_data")
-                # Build the find query
-                find_query = {"$vectorize": query}
-                results_cursor = ritual_data_collection.find(
-                    projection={"$vectorize": True, "content": True, "description": True},  # Request content and description
-                    sort=find_query,
-                    limit=limit,  # Use the provided limit
+    # Retry with exponential backoff for transient errors (e.g., 5xx/connection)
+    attempts = 0
+    base_delay = 0.5
+    last_exc: Optional[Exception] = None
+    while attempts < 3:
+        try:
+            ritual_data_collection = astra_db.get_collection("ritual_data")
+            # Build the find query
+            find_query = {"$vectorize": query}
+            results_cursor = ritual_data_collection.find(
+                projection={"$vectorize": True, "content": True, "description": True},  # Request content and description
+                sort=find_query,
+                limit=limit,  # Use the provided limit
+            )
+
+            ritual_info: List[Dict[str, Any]] = []
+            for doc in results_cursor:
+                ritual_info.append(doc)
+
+            if not ritual_info:
+                logging.info(
+                    f"get_ritual_information: No relevant ritual information found for query: '{query}'"
                 )
+                return []  # Return an empty list if no relevant results found
+            return ritual_info
+        except Exception as e:
+            last_exc = e
+            attempts += 1
+            # Classify likely transient errors by message hints
+            msg = str(e)
+            is_transient = any(hint in msg for hint in [
+                "503", "502", "504", "Service Unavailable", "Timeout", "temporarily", "connection", "reset by peer"
+            ])
+            logging.warning(
+                {
+                    "event": "ritual_info_retry",
+                    "attempt": attempts,
+                    "transient": is_transient,
+                    "error": msg,
+                }
+            )
+            if attempts >= 3 or not is_transient:
+                break
+            await asyncio.sleep(base_delay * (2 ** (attempts - 1)))
 
-                ritual_info: List[Dict[str, Any]] = []
-                for doc in results_cursor:
-                    ritual_info.append(doc)
-
-                if not ritual_info:
-                    logger.info(
-                        f"get_ritual_information: No relevant ritual information found for query: '{query}'"
-                    )
-                    return []  # Return an empty list if no relevant results found
-                return ritual_info
-            except Exception as e:
-                last_exc = e
-                attempts += 1
-                # Classify likely transient errors by message hints
-                msg = str(e)
-                is_transient = any(hint in msg for hint in [
-                    "503", "502", "504", "Service Unavailable", "Timeout", "temporarily", "connection", "reset by peer"
-                ])
-                logger.warning(
-                    {
-                        "event": "ritual_info_retry",
-                        "attempt": attempts,
-                        "transient": is_transient,
-                        "error": msg,
-                    }
-                )
-                if attempts >= 3 or not is_transient:
-                    break
-                await asyncio.sleep(base_delay * (2 ** (attempts - 1)))
-
-        # Fallback path when DB is unavailable or non-transient error occurred
-        logger.error(
-            f"get_ritual_information: falling back to static data for query '{query}' due to error: {last_exc}",
-            exc_info=False,
-        )
-        return _static_ritual_fallback(query, limit)
+    # Fallback path when DB is unavailable or non-transient error occurred
+    logging.error(
+        f"get_ritual_information: falling back to static data for query '{query}' due to error: {last_exc}",
+        exc_info=False,
+    )
+    return _static_ritual_fallback(query, limit)
 
 if __name__ == "__main__":
     # Example usage of the get_ritual_information function
@@ -187,8 +187,8 @@ if __name__ == "__main__":
     async def main():
         # Example 1: General query
         response1 = await get_ritual_information("kanyadhanam")
-        logger.info("\n--- General Query ---")
-        logger.info(response1)
+        logging.info("\n--- General Query ---")
+        logging.info(response1)
 
      
 

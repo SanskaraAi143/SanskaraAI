@@ -1,5 +1,5 @@
 from google.adk.artifacts import InMemoryArtifactService
-from logger import json_logger as logger
+import logging
 
 # Global artifact service instance used across REST and WebSocket runners
 artifact_service = InMemoryArtifactService()
@@ -35,7 +35,7 @@ def record_artifact_metadata(version: str | int, metadata: dict):
                     "auto_summary": metadata.get("auto_summary"),
                 }
     except Exception as e:  # pragma: no cover
-        logger.debug(f"record_artifact_metadata failed: {e}")
+        logging.debug(f"record_artifact_metadata failed: {e}")
 
 def get_artifact_metadata(version: str | int):
     return artifact_metadata.get(str(version))
@@ -51,7 +51,7 @@ async def list_session_artifacts(app_name: str, user_id: str, session_id: str):
     # entries_dict = _session_artifact_index.get(key, {})
     # if entries_dict:
     #     items = list(entries_dict.values())
-    #     logger.debug({
+    #     logging.debug({
     #         "event": "list_session_artifacts:metadata_index_hit",
     #         "key": key,
     #         "count": len(items)
@@ -72,14 +72,14 @@ async def list_session_artifacts(app_name: str, user_id: str, session_id: str):
                 "caption": meta.get("caption"),
                 "auto_summary": meta.get("auto_summary"),
             })
-        logger.debug({
+        logging.debug({
             "event": "list_session_artifacts:fallback_raw_keys",
             "key": key,
             "raw_key_count": len(raw_keys or []),
         })
         return synthesized
     except Exception as e:
-        logger.debug(f"list_session_artifacts fallback failed for {key}: {e}")
+        logging.debug(f"list_session_artifacts fallback failed for {key}: {e}")
         return []
 
 def find_session_artifacts_by_filenames(app_name: str, user_id: str, session_id: str, filenames: list[str]):
@@ -106,13 +106,13 @@ def list_all_session_artifacts(app_name: str):
                     **vinfo,
                 })
     except Exception as e:  # pragma: no cover
-        logger.debug(f"list_all_session_artifacts failed: {e}")
+        logging.debug(f"list_all_session_artifacts failed: {e}")
     return results
 
 def get_latest_session_for_user(app_name: str, user_id: str):
     return _latest_session_for_user.get((app_name, user_id))
 
-logger.info("Global InMemoryArtifactService initialized (artifact_service) with metadata & session index")
+logging.info("Global InMemoryArtifactService initialized (artifact_service) with metadata & session index")
 
 __all__ = [
     "artifact_service",

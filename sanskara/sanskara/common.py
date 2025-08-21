@@ -4,7 +4,7 @@ import websockets
 import traceback
 from websockets.exceptions import ConnectionClosed
 from websockets.server import ServerConnection
-from logger import json_logger as logger # Import the custom JSON logger
+import logging # Import the custom JSON logger
 
 # Constants
 PROJECT_ID = "sanskaraAI"
@@ -22,22 +22,22 @@ class BaseWebSocketServer:
         self.active_clients = {}
 
     async def start(self):
-        logger.info(f"Starting WebSocket server on {self.host}:{self.port}")
+        logging.info(f"Starting WebSocket server on {self.host}:{self.port}")
         async with websockets.serve(self.handle_client, self.host, self.port):
             await asyncio.Future()
 
     async def handle_client(self, websocket: ServerConnection, path):
-        logger.info(f"New client connected: {websocket} , 'path': {path}")
+        logging.info(f"New client connected: {websocket} , 'path': {path}")
         client_id = id(websocket)
-        logger.info(f"New client connected: {client_id}")
+        logging.info(f"New client connected: {client_id}")
         await websocket.send(json.dumps({"type": "ready"}))
         try:
             await self.process_audio(websocket, client_id)
         except ConnectionClosed:
-            logger.info(f"Client disconnected: {client_id}")
+            logging.info(f"Client disconnected: {client_id}")
         except Exception as e:
-            logger.error(f"Error handling client {client_id}: {e}")
-            logger.error(traceback.format_exc())
+            logging.error(f"Error handling client {client_id}: {e}")
+            logging.error(traceback.format_exc())
         finally:
             if client_id in self.active_clients:
                 del self.active_clients[client_id]

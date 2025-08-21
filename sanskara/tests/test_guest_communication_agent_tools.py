@@ -11,10 +11,10 @@ import asyncio
 from sanskara.sub_agents.guest_and_communication_agent import tools
 
 
-# Mock the logger to prevent actual logging during tests
+# Mock the logging.to prevent actual logging during tests
 @pytest.fixture(autouse=True)
-def mock_logger():
-    with patch('sanskara.sub_agents.guest_and_communication_agent.tools.logger') as mock_log:
+def mock_logging():
+    with patch('sanskara.sub_agents.guest_and_communication_agent.tools.logging') as mock_log:
         mock_log.contextualize.return_value.__enter__.return_value = mock_log
         yield mock_log
 

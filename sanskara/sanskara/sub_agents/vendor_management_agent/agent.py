@@ -1,7 +1,7 @@
 from google.adk.agents import LlmAgent
 from google.adk.planners.plan_re_act_planner import PlanReActPlanner
 from google.genai import types
-from logger import json_logger as logger # Import the custom JSON logger
+import logging # Import the custom JSON logger
 
 from sanskara.sub_agents.vendor_management_agent.prompt import VENDOR_MANAGEMENT_AGENT_PROMPT
 from sanskara.sub_agents.vendor_management_agent.tools import (
@@ -35,4 +35,4 @@ vendor_management_agent = LlmAgent(
         # submit_review
     ],
 )
-logger.info("VendorManagementAgent initialized.")
+logging.info("VendorManagementAgent initialized.")

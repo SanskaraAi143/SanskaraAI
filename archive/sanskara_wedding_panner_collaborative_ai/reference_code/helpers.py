@@ -8,8 +8,6 @@ import logging # Import standard logging
 from typing import Optional, Any, Tuple, Dict
 from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset, StdioServerParameters
 
-# Configure logging for this module
-logger = logging.getLogger(__name__)
 
 # Load .env from the project root (two levels up from shared_libraries)
 # This ensures environment variables are loaded when this module is imported.
@@ -17,13 +15,13 @@ logger = logging.getLogger(__name__)
 # dotenv usually handles multiple calls gracefully (doesn't overwrite existing env vars by default).
 dotenv_path = os.path.join(os.path.dirname(__file__), '..', '..', '.env')
 if dotenv.load_dotenv(dotenv_path=dotenv_path):
-    logger.info(f"helpers.py: Loaded .env from: {dotenv_path}")
+    logging.info(f"helpers.py: Loaded .env from: {dotenv_path}")
 else:
     # Fallback if .env is in current dir (e.g. if script run from root)
     if dotenv.load_dotenv():
-        logger.info("helpers.py: Loaded .env from current directory or parent.")
+        logging.info("helpers.py: Loaded .env from current directory or parent.")
     else:
-        logger.warning("helpers.py: .env file not found. Critical environment variables might be missing.")
+        logging.warning("helpers.py: .env file not found. Critical environment variables might be missing.")
 
 
 SUPABASE_ACCESS_TOKEN = os.getenv("SUPABASE_ACCESS_TOKEN")
@@ -58,9 +56,9 @@ async def init_supabase_mcp() -> Tuple[Optional[MCPToolset], Optional[Dict[str, 
     """
     global _supabase_mcp_toolset, _supabase_tools
     if _supabase_mcp_toolset is None:
-        logger.info("init_supabase_mcp: Attempting to initialize Supabase MCP toolset.")
+        logging.info("init_supabase_mcp: Attempting to initialize Supabase MCP toolset.")
         if not SUPABASE_ACCESS_TOKEN:
-            logger.error("init_supabase_mcp: SUPABASE_ACCESS_TOKEN environment variable is not set.")
+            logging.error("init_supabase_mcp: SUPABASE_ACCESS_TOKEN environment variable is not set.")
             raise ValueError("SUPABASE_ACCESS_TOKEN environment variable is not set.")
 
         try:
@@ -74,15 +72,15 @@ async def init_supabase_mcp() -> Tuple[Optional[MCPToolset], Optional[Dict[str, 
 
             tools = await mcp.get_tools()
             if not tools or "execute_sql" not in [tool.name for tool in tools]:
-                logger.error("init_supabase_mcp: 'execute_sql' tool not found after MCP server connection.")
+                logging.error("init_supabase_mcp: 'execute_sql' tool not found after MCP server connection.")
                 raise RuntimeError("'execute_sql' tool not found in Supabase MCP server.")
 
             _supabase_mcp_toolset = mcp
             _supabase_tools = {tool.name: tool for tool in tools}
-            logger.info("init_supabase_mcp: Supabase MCP toolset initialized successfully with 'execute_sql' tool.")
+            logging.info("init_supabase_mcp: Supabase MCP toolset initialized successfully with 'execute_sql' tool.")
 
         except Exception as e:
-            logger.exception(f"init_supabase_mcp: Failed to initialize Supabase MCP toolset: {e}")
+            logging.exception(f"init_supabase_mcp: Failed to initialize Supabase MCP toolset: {e}")
             # Reset globals to allow retry if applicable, or ensure they remain None
             _supabase_mcp_toolset = None
             _supabase_tools = None
@@ -155,7 +153,7 @@ async def execute_supabase_sql(sql: str, params: Optional[Dict[str, Any]] = None
         Be extremely cautious if constructing SQL with user-provided keys in `params`.
         Ideally, use this for predefined queries where `params` keys are controlled.
     """
-    logger.debug(f"execute_supabase_sql: Received SQL: {sql}, Params: {params}")
+    logging.debug(f"execute_supabase_sql: Received SQL: {sql}, Params: {params}")
     try:
         # Ensure MCP is initialized. This will raise if critical env vars are missing.
         mcp_set, tools_map = await init_supabase_mcp()
@@ -172,15 +170,15 @@ async def execute_supabase_sql(sql: str, params: Optional[Dict[str, Any]] = None
                 # Ensure placeholder format is consistent, e.g., always :key
                 placeholder = f":{k}"
                 if placeholder not in final_sql:
-                    logger.warning(f"execute_supabase_sql: Parameter key '{k}' as placeholder '{placeholder}' not found in SQL query. SQL: {sql}")
+                    logging.warning(f"execute_supabase_sql: Parameter key '{k}' as placeholder '{placeholder}' not found in SQL query. SQL: {sql}")
                     # Decide if this is an error or just a warning. For now, warning.
                 final_sql = final_sql.replace(placeholder, sql_quote_value(v))
 
         mcp_args = {"query": final_sql, "project_id": SUPABASE_PROJECT_ID}
-        logger.debug(f"execute_supabase_sql: Executing with MCP args: {mcp_args}")
+        logging.debug(f"execute_supabase_sql: Executing with MCP args: {mcp_args}")
 
         mcp_result = await sql_tool.run_async(args=mcp_args, tool_context=None)
-        logger.debug(f"execute_supabase_sql: Raw result from MCP: {mcp_result}")
+        logging.debug(f"execute_supabase_sql: Raw result from MCP: {mcp_result}")
 
         if hasattr(mcp_result, "content") and mcp_result.content and hasattr(mcp_result.content[0], "text"):
             text_response = mcp_result.content[0].text
@@ -193,25 +191,25 @@ async def execute_supabase_sql(sql: str, params: Optional[Dict[str, Any]] = None
             except json.JSONDecodeError:
                 # If direct JSON load fails, try extracting JSON-like string if it's embedded               
                 # If still no valid JSON, and it's not an obvious error structure from MCP itself:
-                logger.error(f"execute_supabase_sql: Failed to parse MCP response as JSON. Response text: {text_response}")
+                logging.error(f"execute_supabase_sql: Failed to parse MCP response as JSON. Response text: {text_response}")
                 return {"status": "error", "error": "Failed to parse database response.", "details": text_response}
 
         # Handle cases where MCP result might indicate an error more directly
         if hasattr(mcp_result, "error_message") and mcp_result.error_message:
-            logger.error(f"execute_supabase_sql: MCP tool returned an error: {mcp_result.error_message}")
+            logging.error(f"execute_supabase_sql: MCP tool returned an error: {mcp_result.error_message}")
             return {"status": "error", "error": mcp_result.error_message}
 
-        logger.error(f"execute_supabase_sql: No content or unexpected format in MCP response: {mcp_result}")
+        logging.error(f"execute_supabase_sql: No content or unexpected format in MCP response: {mcp_result}")
         return {"status": "error", "error": "No content or unexpected format in database response."}
 
     except ValueError as ve: # Catch specific errors from init_supabase_mcp
-        logger.error(f"execute_supabase_sql: Initialization error: {ve}")
+        logging.error(f"execute_supabase_sql: Initialization error: {ve}")
         return {"status": "error", "error": str(ve)}
     except RuntimeError as rte: # Catch specific errors from init_supabase_mcp
-        logger.error(f"execute_supabase_sql: Runtime error during MCP interaction: {rte}")
+        logging.error(f"execute_supabase_sql: Runtime error during MCP interaction: {rte}")
         return {"status": "error", "error": str(rte)}
     except Exception as e:
-        logger.exception(f"execute_supabase_sql: Unexpected error executing SQL '{sql[:100]}...': {e}")
+        logging.exception(f"execute_supabase_sql: Unexpected error executing SQL '{sql[:100]}...': {e}")
         # Mask potentially sensitive details from raw exception string
         return {"status": "error", "error": "An unexpected error occurred during SQL execution."}
 
@@ -236,7 +234,7 @@ def extract_untrusted_json(text_data: str) -> Optional[Any]:
         ```
     """
     if not isinstance(text_data, str):
-        logger.warning(f"extract_untrusted_json: Input was not a string, type: {type(text_data)}")
+        logging.warning(f"extract_untrusted_json: Input was not a string, type: {type(text_data)}")
         return None
 
     # Use a non-greedy regex to find the smallest JSON object or array
@@ -249,9 +247,9 @@ def extract_untrusted_json(text_data: str) -> Optional[Any]:
         try:
             return json.loads(json_str)
         except json.JSONDecodeError as e:
-            logger.warning(f"extract_untrusted_json: JSON parsing failed for extracted string: '{json_str}'. Error: {e}")
+            logging.warning(f"extract_untrusted_json: JSON parsing failed for extracted string: '{json_str}'. Error: {e}")
             return None
-    logger.debug(f"extract_untrusted_json: No JSON array or object found in text: {text_data[:100]}...")
+    logging.debug(f"extract_untrusted_json: No JSON array or object found in text: {text_data[:100]}...")
     return None
 
 
@@ -261,49 +259,49 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG) # Enable debug logging for test
 
     async def test_helpers():
-        logger.info("Testing helper functions...")
+        logging.info("Testing helper functions...")
 
         # Test init_supabase_mcp (requires SUPABASE_ACCESS_TOKEN in .env)
         if SUPABASE_ACCESS_TOKEN:
-            logger.info("\n--- Testing init_supabase_mcp ---")
+            logging.info("\n--- Testing init_supabase_mcp ---")
             try:
                 mcp_set, tools_map = await init_supabase_mcp()
                 if mcp_set and tools_map:
-                    logger.info(f"Supabase MCP initialized. Found tools: {list(tools_map.keys())}")
+                    logging.info(f"Supabase MCP initialized. Found tools: {list(tools_map.keys())}")
 
-                    logger.info("\n--- Testing execute_supabase_sql (SELECT 1) ---")
+                    logging.info("\n--- Testing execute_supabase_sql (SELECT 1) ---")
                     # Requires SUPABASE_PROJECT_ID to be set or uses default
                     select_result = await execute_supabase_sql("SELECT 1 as testval;", {})
-                    logger.info(f"SELECT 1 Result: {json.dumps(select_result, indent=2)}")
+                    logging.info(f"SELECT 1 Result: {json.dumps(select_result, indent=2)}")
                     assert select_result.get("status") == "success"
                     assert isinstance(select_result.get("data"), list)
                     assert select_result["data"][0].get("testval") in [1, "1"] # Varies by DB/driver
 
                 else:
-                    logger.error("Supabase MCP initialization failed to return expected objects in test.")
+                    logging.error("Supabase MCP initialization failed to return expected objects in test.")
             except Exception as e:
-                logger.error(f"Error during MCP initialization/execution test: {e}")
+                logging.error(f"Error during MCP initialization/execution test: {e}")
         else:
-            logger.warning("Skipping init_supabase_mcp and execute_supabase_sql tests: SUPABASE_ACCESS_TOKEN not set.")
+            logging.warning("Skipping init_supabase_mcp and execute_supabase_sql tests: SUPABASE_ACCESS_TOKEN not set.")
 
         # Test sql_quote_value
-        logger.info("\n--- Testing sql_quote_value ---")
-        logger.info(f"None -> {sql_quote_value(None)}")
-        logger.info(f"123 -> {sql_quote_value(123)}")
-        logger.info(f"O'Malley -> {sql_quote_value("O'Malley")}")
-        logger.info(f"[1, \"test\"] -> {sql_quote_value([1, "test"])}")
-        logger.info(f"{{'key': 'val with \\'quote\\''}} -> {sql_quote_value({'key': "val with 'quote'"})}")
+        logging.info("\n--- Testing sql_quote_value ---")
+        logging.info(f"None -> {sql_quote_value(None)}")
+        logging.info(f"123 -> {sql_quote_value(123)}")
+        logging.info(f"O'Malley -> {sql_quote_value("O'Malley")}")
+        logging.info(f"[1, \"test\"] -> {sql_quote_value([1, "test"])}")
+        logging.info(f"{{'key': 'val with \\'quote\\''}} -> {sql_quote_value({'key': "val with 'quote'"})}")
 
         # Test extract_untrusted_json
-        logger.info("\n--- Testing extract_untrusted_json ---")
+        logging.info("\n--- Testing extract_untrusted_json ---")
         test_str1 = "Some log [{\"id\": 1, \"name\": \"Test\"}] more log"
-        logger.info(f"'{test_str1}' -> {extract_untrusted_json(test_str1)}")
+        logging.info(f"'{test_str1}' -> {extract_untrusted_json(test_str1)}")
         test_str2 = "{\"error\": \"Something went wrong\"} but also other stuff"
-        logger.info(f"'{test_str2}' -> {extract_untrusted_json(test_str2)}")
+        logging.info(f"'{test_str2}' -> {extract_untrusted_json(test_str2)}")
         test_str3 = "No json here"
-        logger.info(f"'{test_str3}' -> {extract_untrusted_json(test_str3)}")
+        logging.info(f"'{test_str3}' -> {extract_untrusted_json(test_str3)}")
         test_str4 = "Embedded: {\\\"key\\\": \\\"value with esc \\\\\\\"quotes\\\\\\\"\\\"}" # Escaped quotes
-        logger.info(f"'{test_str4}' -> {extract_untrusted_json(test_str4)}")
+        logging.info(f"'{test_str4}' -> {extract_untrusted_json(test_str4)}")
 
 
     asyncio.run(test_helpers())

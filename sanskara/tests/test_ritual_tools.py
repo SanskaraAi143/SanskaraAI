@@ -1,5 +1,5 @@
 import pytest
-from logger import logger
+import logging
 from unittest.mock import patch, MagicMock
 from sanskara.sub_agents.ritual_and_cultural_agent.tools import get_ritual_information as search_rituals
 from sanskara.db import astra_db
@@ -65,7 +65,7 @@ async def test_search_rituals_success():
     response = await search_rituals(question, limit=1)
 
     assert isinstance(response, list) # Expect a list of documents
-    logger.info(f"Found {len(response)} rituals matching the query. response: {response}")
+    logging.info(f"Found {len(response)} rituals matching the query. response: {response}")
     assert len(response) > 0 ,f"# Check length of the list , found: {len(response)} {response}"
 
 @pytest.mark.asyncio

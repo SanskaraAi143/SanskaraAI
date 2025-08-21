@@ -34,8 +34,9 @@ from sanskara.tools import (
 # Use the new stateful Context Manager V2 (composes baseline context + workflows)
 from sanskara.context_manager_v2 import ContextManagerV2
 # Removed context_debugger import (legacy)
-from sanskara.helpers import get_current_datetime # For fetching user and wedding info
-from logger import json_logger as logger # Import the custom JSON logger
+from sanskara.helpers import get_current_datetime, execute_supabase_sql # For fetching user and wedding info and executing sql
+import logging # Import the custom JSON logger
+from sanskara.exceptions import WeddingNotActiveError
 
 # New imports for structured context and semantic recall
 from sanskara.context_models import OrchestratorContext, OrchestratorMeta, SemanticMemory
@@ -71,7 +72,7 @@ async def parse_and_load_images_callback(
     - Cleans the user text by removing the [FILES: ...] markers to avoid confusing the model.
     - Returns None to proceed with modified request; or a short LlmResponse on hard error.
     """
-    logger.info("Parsing and loading images from user message")
+    logging.info("Parsing and loading images from user message")
     try:
         if not llm_request or not getattr(llm_request, "contents", None):
             return None
@@ -94,7 +95,7 @@ async def parse_and_load_images_callback(
             return None
 
         # Match [FILES: ...] or [FILE: ...]
-        matches = re.findall(r"\[(FILES?|files?):\s*([^\]]+)\]", user_text)
+        matches = re.findall(r"\\\[(FILES?|files?):\s*([^\\]+)\\]", user_text)
         if not matches:
             return None
 
@@ -113,14 +114,14 @@ async def parse_and_load_images_callback(
             try:
                 art = await callback_context.load_artifact(filename=fname)
             except Exception as e:
-                logger.debug(f"before_model: load_artifact failed for {fname}: {e}")
+                logging.debug(f"before_model: load_artifact failed for {fname}: {e}")
                 continue
             # Expecting an object with inline_data {mime_type, data}
             inline = getattr(art, "inline_data", None)
             mime = getattr(inline, "mime_type", None) if inline else None
             if mime and isinstance(mime, str) and mime.lower().startswith("image/"):
                 image_parts.append(art)
-                logger.info({
+                logging.info({
                     "event": "before_model:add_image_part",
                     "filename": fname,
                     "mime_type": mime,
@@ -130,7 +131,7 @@ async def parse_and_load_images_callback(
             return None
 
         # Clean the text by removing all [FILES: ...] segments
-        cleaned_text = re.sub(r"\[(FILES?|files?):\s*[^\]]+\]", "", user_text).strip()
+        cleaned_text = re.sub(r"\\\[(FILES?|files?):\s*[^\\]+\\]", "", user_text).strip()
 
         # Rebuild user parts: cleaned text (if any) + images
         new_parts: List[types.Part] = []
@@ -143,14 +144,14 @@ async def parse_and_load_images_callback(
         contents_copy[user_index] = updated_user
         llm_request.contents = contents_copy
 
-        logger.info({
+        logging.info({
             "event": "before_model:enhanced_with_images",
             "count": len(image_parts),
             "filenames": filenames,
         })
         return None
     except Exception as e:
-        logger.error(f"before_model: parse_and_load_images_callback error: {e}", exc_info=True)
+        logging.error(f"before_model: parse_and_load_images_callback error: {e}", exc_info=True)
         # Fail open: proceed with normal request
         return None
 
@@ -164,36 +165,37 @@ async def orchestrator_before_agent_callback(
     wedding_id = callback_context.state.get("current_wedding_id")
     user_id = callback_context.state.get("current_user_id")
     
-    with logger.contextualize(
-        wedding_id=wedding_id,
-        user_id=user_id,
-        agent_name="OrchestratorAgent",
-    ):
-        logger.debug(
-            "Entering orchestrator_before_agent_callback with state:"\
-            f"user content {callback_context.user_content}"
+    logging.info({
+        "event": "orchestrator_before_agent_callback:start",
+        "wedding_id": wedding_id,
+        "user_id": user_id,
+        "agent_name": "OrchestratorAgent",
+    })
+    logging.debug(
+        "Entering orchestrator_before_agent_callback with state:"\
+        f"user content {callback_context.user_content}"
+    )
+
+    if not wedding_id:
+        logging.warning(
+            "No wedding_id found in session state. Cannot prime"\
+            " OrchestratorAgent context."
         )
+        callback_context.state.update(
+            {
+                "wedding_data": None,
+                "active_workflows": None,
+                "all_tasks": None,
+                "current_wedding_id": None,
+                "current_user_id": user_id,
+                "current_user_role": "bride",
+                # Keep placeholder so prompt variable exists but do NOT pre-populate
+                "recent_artifacts": [],
+            }
+        )
+        return None
 
-        if not wedding_id:
-            logger.warning(
-                "No wedding_id found in session state. Cannot prime"\
-                " OrchestratorAgent context."
-            )
-            callback_context.state.update(
-                {
-                    "wedding_data": None,
-                    "active_workflows": None,
-                    "all_tasks": None,
-                    "current_wedding_id": None,
-                    "current_user_id": user_id,
-                    "current_user_role": "bride",
-                    # Keep placeholder so prompt variable exists but do NOT pre-populate
-                    "recent_artifacts": [],
-                }
-            )
-            return None
-
-        try:
+    try:
             # Get user role (fix the hardcoded issue)
             user_role = await _get_user_role(wedding_id, user_id)
             
@@ -238,7 +240,7 @@ async def orchestrator_before_agent_callback(
                     if isinstance(context_data.get(k), list) and len(context_data[k]) > max_len:
                         context_data[k] = context_data[k][:max_len]
             except Exception as e:
-                logger.warning(f"Token guard capping failed: {e}")
+                logging.warning(f"Token guard capping failed: {e}")
             
             # Ensure prompt-referenced keys exist with safe defaults (artifact list intentionally empty)
             # Baseline context already includes safe defaults
@@ -295,9 +297,9 @@ async def orchestrator_before_agent_callback(
                                 except Exception:
                                     pass
                     except Exception as _e:
-                        logger.debug(f"Failed to create initial chat session: {_e}")
+                        logging.debug(f"Failed to create initial chat session: {_e}")
             except Exception as mem_err:
-                logger.warning(f"Conversation summary load failed: {mem_err}")
+                logging.warning(f"Conversation summary load failed: {mem_err}")
                 conversation_summary = None
             
             context_data["conversation_summary"] = conversation_summary or ""
@@ -330,7 +332,7 @@ async def orchestrator_before_agent_callback(
                 )
                 callback_context.state["orchestrator_context"] = structured_ctx.to_state()
             except Exception as build_err:
-                logger.warning(f"Failed to build OrchestratorContext: {build_err}")
+                logging.warning(f"Failed to build OrchestratorContext: {build_err}")
             
             try:
                 callback_context.state["semantic_memory"] = {
@@ -340,32 +342,34 @@ async def orchestrator_before_agent_callback(
             except Exception:
                 pass
             
-            wedding_data = context_data.get("wedding_data", {})
-            if wedding_data and wedding_data.get("status") != "active":
-                logger.info(f"Wedding {wedding_id} is not active (status: {wedding_data.get('status')}). Orchestrator will not process requests.")
-                return LlmResponse(
-                    text=f"Your wedding planning setup is currently in '{wedding_data.get('status')}' status. Please complete the onboarding process before I can fully assist you. I'll be ready to help once your wedding status is 'active'!"
+            wedding_status = await _get_wedding_status(wedding_id)
+            if wedding_status != "active":
+                logging.warning(f"Wedding {wedding_id} is not active (status: {wedding_status}). Raising WeddingNotActiveError.")
+                raise WeddingNotActiveError(
+                    f"Your wedding planning setup is currently in '{wedding_status}' status. "
+                    "Please complete the onboarding process before I can fully assist you. "
+                    "I'll be ready to help once your wedding status is 'active'!"
                 )
 
-            logger.info(
+            logging.info(
                 f"Successfully assembled baseline context for wedding {wedding_id}. "
                 f"Context keys: {list(context_data.keys())}"
             )
 
             callback_context.state.update(context_data)
 
-            logger.info(
+            logging.info(
                 f"OrchestratorAgent baseline context primed for wedding {wedding_id}. "
                 f"Final context keys: {list(context_data.keys())}"
             )
 
-        except Exception as e:
-            logger.error(
-                "Error in orchestrator_before_agent_callback for wedding"\
-                f" {wedding_id}: {e}",
-                exc_info=True,
-            )
-            raise
+    except Exception as e:
+        logging.error(
+            "Error in orchestrator_before_agent_callback for wedding"\
+            f" {wedding_id}: {e}",
+            exc_info=True,
+        )
+        raise
     return None
 
 
@@ -389,7 +393,7 @@ async def orchestrator_after_agent_callback(
             first_part = callback_context.user_content.parts[0]
             user_text = getattr(first_part, "text", "") or ""
     except Exception as e:
-        logger.warning(f"after_callback: failed to extract user text: {e}")
+        logging.warning(f"after_callback: failed to extract user text: {e}")
         user_text = ""
 
     # Skip if there's nothing to persist
@@ -412,7 +416,7 @@ async def orchestrator_after_agent_callback(
             if create_resp.get("status") == "success" and create_resp.get("data"):
                 session_id = create_resp["data"][0].get("session_id")
     except Exception as e:
-        logger.error(f"after_callback: failed to ensure chat session: {e}", exc_info=True)
+        logging.error(f"after_callback: failed to ensure chat session: {e}", exc_info=True)
         return None
 
     if not session_id:
@@ -474,10 +478,10 @@ async def orchestrator_after_agent_callback(
         #             metadata={"session_id": session_id, "message_id": db_msg_id, **(metadata or {})},
         #         )
         #     except Exception as e:
-        #         logger.debug(f"after_callback: add_text_to_memory failed: {e}")
+        #         logging.debug(f"after_callback: add_text_to_memory failed: {e}")
 
     except Exception as e:
-        logger.error(f"after_callback: failed to insert chat message: {e}", exc_info=True)
+        logging.error(f"after_callback: failed to insert chat message: {e}", exc_info=True)
         return None
 
     # Rolling summary every N turns (user messages only for now)
@@ -508,7 +512,7 @@ async def orchestrator_after_agent_callback(
             summary_payload = {"rolling_summary": summary_text}
             await execute_supabase_sql(update_chat_session_summary_query(session_id, summary_payload))
     except Exception as e:
-        logger.warning(f"after_callback: rolling summary failed: {e}")
+        logging.warning(f"after_callback: rolling summary failed: {e}")
 
     return None
 
@@ -537,8 +541,8 @@ def _sanitize_text(text: str) -> str:
 async def _get_user_role(wedding_id: str, user_id: str) -> str:
     """Get the actual user role from database instead of hardcoding"""
     sql = """
-    SELECT 
-        CASE 
+    SELECT
+        CASE
             WHEN wm.role IS NOT NULL THEN wm.role
             WHEN u.email = (w.details->>'bride_email') THEN 'bride'
             WHEN u.email = (w.details->>'groom_email') THEN 'groom'
@@ -550,13 +554,26 @@ async def _get_user_role(wedding_id: str, user_id: str) -> str:
     WHERE w.wedding_id = :wedding_id;
     """
     
-    from sanskara.helpers import execute_supabase_sql
     result = await execute_supabase_sql(sql, {"wedding_id": wedding_id, "user_id": user_id})
     
     if result.get("status") == "success" and result.get("data"):
         return result["data"][0].get("user_role", "member")
     
     return "member"  # Default fallback
+
+async def _get_wedding_status(wedding_id: str) -> str:
+    """Get the status of the wedding from the database."""
+    sql = """
+        SELECT status FROM weddings WHERE wedding_id = :wedding_id;
+    """
+    params = {"wedding_id": wedding_id}
+    result = await execute_supabase_sql(sql, params)
+
+    if result.get("status") == "success" and result.get("data"):
+        return result["data"][0].get("status", "unknown")
+    
+    logging.warning(f"Wedding {wedding_id} not found or error occurred during status check. Result: {result}")
+    return "not_found" # Or appropriate default/error status
 
 orchestrator_agent = LlmAgent(
     name="OrchestratorAgent",
