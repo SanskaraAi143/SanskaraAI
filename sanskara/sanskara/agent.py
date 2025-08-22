@@ -20,12 +20,16 @@ from sanskara.sub_agents.task_and_timeline_agent.agent import task_and_timeline_
 from sanskara.prompt import ORCHESTRATOR_AGENT_PROMPT
 from sanskara.tools import (
     get_active_workflows,
+    get_tasks_for_wedding,
     update_workflow_status,
     update_task_details,
     # Removed legacy context readers: get_wedding_context, get_tasks_for_wedding,
     # get_task_feedback, get_task_approvals, get_complete_wedding_context
     upsert_workflow,
     upsert_task,
+    add_task_feedback,
+    get_complete_wedding_context,
+    set_task_approval,
     load_artifact_content,
     # resolve_artifacts,  # deprecated
     list_user_artifacts,
@@ -514,6 +518,22 @@ async def orchestrator_after_agent_callback(
     except Exception as e:
         logging.warning(f"after_callback: rolling summary failed: {e}")
 
+    # Refresh workflows in session state so {workflows} stays current for next turn
+    try:
+        fresh_workflows = await get_active_workflows(wedding_id)
+        if isinstance(fresh_workflows, list):
+            try:
+                callback_context.state["active_workflows"] = fresh_workflows
+            except Exception:
+                pass
+            try:
+                # Keep the unified alias in sync for prompt placeholder {workflows}
+                callback_context.state["workflows"] = fresh_workflows
+            except Exception:
+                pass
+    except Exception as e:
+        logging.debug(f"after_callback: workflow refresh failed: {e}")
+
     return None
 
 # Lightweight output sanitizer (optional): collapse odd splits like "K ashi" -> "Kashi".
@@ -592,19 +612,23 @@ orchestrator_agent = LlmAgent(
     ],
     tools=[
         get_active_workflows,
+        get_tasks_for_wedding,
         update_workflow_status,
         update_task_details,
         get_current_datetime,
         upsert_workflow,
         upsert_task,
+    add_task_feedback,
+        get_complete_wedding_context,
+    set_task_approval,
         vendor_management_agent_tool,
         budget_and_expense_agent_tool,
         ritual_and_cultural_agent_tool,
         creative_agent_tool,
         task_and_timeline_tool,
-    load_artifact_content,
-    list_user_artifacts,
-    list_user_files_py,
+        load_artifact_content,
+        list_user_artifacts,
+        list_user_files_py,
     ],
     before_model_callback=parse_and_load_images_callback,
     before_agent_callback= orchestrator_before_agent_callback,

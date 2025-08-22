@@ -21,7 +21,9 @@ __all__ = [
     "create_task",
     "upsert_task",
     "get_task_feedback",
+    "add_task_feedback",
     "get_task_approvals",
+    "set_task_approval",
     "get_complete_wedding_context",
     "resolve_artifact_filenames",
     "load_artifact_content",
@@ -391,6 +393,47 @@ async def get_task_feedback(task_id: str) -> List[Dict[str, Any]]:
         logging.error(f"Error fetching task feedback for {task_id}: {e}")
         return {"error": str(e)}
 
+async def add_task_feedback(
+    task_id: str,
+    user_id: str,
+    content: str,
+    feedback_type: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Inserts a feedback entry for a task into task_feedback.
+
+    Args:
+        task_id: Task identifier.
+        user_id: Authoring user id.
+        content: Feedback text/content.
+        feedback_type: Optional tag (e.g., 'comment', 'like', 'concern').
+
+    Returns:
+        {status, data|message}
+    """
+    sql = (
+        """
+        INSERT INTO task_feedback (task_id, user_id, feedback_type, content)
+        VALUES (:task_id, :user_id, :feedback_type, :content)
+        RETURNING *;
+        """
+    )
+    params = {
+        "task_id": task_id,
+        "user_id": user_id,
+        "feedback_type": feedback_type,
+        "content": content,
+    }
+    try:
+        result = await execute_supabase_sql(sql, params)
+        if result and result.get("status") == "success":
+            return {"status": "success", "data": result.get("data")}
+        else:
+            return {"status": "error", "message": result.get("error", "Unknown error adding feedback")}
+    except Exception as e:
+        logging.error(f"Error adding task feedback for {task_id}: {e}")
+        return {"status": "error", "message": str(e)}
+
 async def get_task_approvals(task_id: str) -> List[Dict[str, Any]]:
     """
     Retrieves all approval entries for a specific task.
@@ -412,6 +455,47 @@ async def get_task_approvals(task_id: str) -> List[Dict[str, Any]]:
     except Exception as e:
         logging.error(f"Error fetching task approvals for {task_id}: {e}")
         return {"error": str(e)}
+
+async def set_task_approval(
+    task_id: str,
+    approving_party: str,
+    status: str,
+    approved_by_user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Inserts an approval record (e.g., 'approved'/'rejected') into task_approvals.
+
+    Args:
+        task_id: Task identifier.
+        approving_party: e.g., 'bride', 'groom', 'couple', 'parent'.
+        status: 'approved' | 'rejected' | 'needs_changes' | custom states.
+        approved_by_user_id: Optional explicit user id performing approval.
+
+    Returns:
+        {status, data|message}
+    """
+    sql = (
+        """
+        INSERT INTO task_approvals (task_id, approving_party, status, approved_by_user_id)
+        VALUES (:task_id, :approving_party, :status, :approved_by_user_id)
+        RETURNING *;
+        """
+    )
+    params = {
+        "task_id": task_id,
+        "approving_party": approving_party,
+        "status": status,
+        "approved_by_user_id": approved_by_user_id,
+    }
+    try:
+        result = await execute_supabase_sql(sql, params)
+        if result and result.get("status") == "success":
+            return {"status": "success", "data": result.get("data")}
+        else:
+            return {"status": "error", "message": result.get("error", "Unknown error setting approval")}
+    except Exception as e:
+        logging.error(f"Error setting task approval for {task_id}: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 async def get_complete_wedding_context(wedding_id: str) -> Dict[str, Any]:

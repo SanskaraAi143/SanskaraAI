@@ -21,6 +21,10 @@ from fastapi import status, UploadFile, File, Form, Depends
 from typing import Optional
 from sanskara.adk_artifacts import artifact_service, record_artifact_metadata, list_session_artifacts
 from google.genai import types as _genai_types
+# Removed SQLAlchemy imports and ChatSession/ChatMessage models
+# from sanskara.db import async_get_db_session # Import the new async session getter
+# from sanskara.models import ChatSession, ChatMessage
+# from sqlalchemy.future import select
 try:
     from logging_setup import setup_logging
 except ImportError:
@@ -47,6 +51,17 @@ app.title = "Sanskara AI"
 @app.on_event("startup")
 async def startup_event():
     logging.info("Application startup event.")
+    # Preload embedding model to reduce first‑user latency.
+    try:
+        try:
+            # Prefer local package path
+            from sanskara.sanskara.memory.supabase_memory_service import preload_embeddings  # type: ignore
+        except Exception:
+            from sanskara.memory.supabase_memory_service import preload_embeddings  # type: ignore
+        dim = preload_embeddings()
+        logging.info(f"Embeddings preloaded (dim={dim}).")
+    except Exception as e:  # pragma: no cover
+        logging.debug(f"Embedding preload failed/skipped: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -275,6 +290,66 @@ async def list_artifacts(user_id: str, session_id: str, app_name: Optional[str] 
     app_name = app_name or os.getenv("SANSKARA_APP_NAME", "sanskara")
     items = await list_session_artifacts(app_name, user_id, session_id)
     return {"status": "success", "artifacts": items}
+
+@app.get("/weddings/{wedding_id}/sessions/{adk_session_id}/messages", tags=["Chat"])
+async def get_chat_messages(wedding_id: str, adk_session_id: str):
+    """
+    Fetches chat messages for a specific wedding and ADK session ID.
+    """
+    try:
+        # Find the ChatSession using wedding_id and adk_session_id
+        check_session_sql = f"""
+        SELECT session_id FROM chat_sessions
+        WHERE wedding_id = '{wedding_id}' AND adk_session_id = '{adk_session_id}';
+        """
+        check_result = await execute_supabase_sql(check_session_sql)
+
+        if not check_result or check_result.get("status") != "success" or not check_result.get("data"):
+            raise StarletteHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Chat session not found."
+            )
+        
+        chat_session_db_id = check_result["data"][0].get("session_id")
+
+        # Fetch all messages for this chat_session.session_id
+        messages_sql = f"""
+        SELECT sender_type, sender_name, content, timestamp FROM chat_messages
+        WHERE session_id = '{chat_session_db_id}'
+        ORDER BY timestamp ASC;
+        """
+        messages_result = await execute_supabase_sql(messages_sql)
+
+        if not messages_result or messages_result.get("status") != "success":
+            raise StarletteHTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to retrieve chat messages: {messages_result.get('error', 'Unknown error')}"
+            )
+        
+        chat_messages_raw = messages_result.get("data", [])
+
+        # Format messages for frontend
+        formatted_messages = []
+        for msg in chat_messages_raw:
+            # content is already JSONB in DB, so it should be a dict here
+            content_data = msg.get("content", {})
+            formatted_messages.append({
+                "sender": msg.get("sender_type"),
+                "text": content_data.get("text", ""),
+                "timestamp": msg.get("timestamp"), # Timestamps are already ISO formatted by Supabase
+                "sender_name": msg.get("sender_name"),
+            })
+
+        return {"status": "success", "messages": formatted_messages}
+
+    except StarletteHTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        logging.error(f"Error fetching chat messages: {e}", exc_info=True)
+        raise StarletteHTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {e}"
+        )
 
 @app.get("/artifacts/content", tags=["Artifacts"])
 async def get_artifact_content(user_id: str, session_id: str, version: str, filename: str, app_name: Optional[str] = None):

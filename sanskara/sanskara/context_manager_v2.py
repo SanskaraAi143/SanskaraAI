@@ -56,6 +56,37 @@ class ContextManagerV2:
         ctx["collab_status"] = collab_status
         ctx["bookings"] = bookings
 
+        # 2b) Provide a unified 'workflows' alias used by the prompt.
+        # Prefer baseline active_workflows if present; otherwise synthesize from workflow_saves.
+        try:
+            active = ctx.get("active_workflows") or []
+            if active:
+                workflows = active
+            else:
+                # Map saves to a simplified workflow view
+                workflows = [
+                    {
+                        "workflow_id": w.get("workflow_id"),
+                        "name": w.get("workflow_name"),
+                        "status": w.get("status"),
+                        # Pass through context_summary as-is; downstream prompt will pick relevant parts
+                        "contextual_data": (w.get("context_summary") or {}).get("contextual_data")
+                            if isinstance(w.get("context_summary"), dict) else None,
+                        "current_stage": (w.get("context_summary") or {}).get("current_stage")
+                            if isinstance(w.get("context_summary"), dict) else None,
+                        "stage_goal": (w.get("context_summary") or {}).get("stage_goal")
+                            if isinstance(w.get("context_summary"), dict) else None,
+                        "next_possible_actions": (w.get("context_summary") or {}).get("next_possible_actions")
+                            if isinstance(w.get("context_summary"), dict) else None,
+                        "updated_at": w.get("updated_at"),
+                    }
+                    for w in (workflow_saves or [])
+                ]
+        except Exception:
+            workflows = ctx.get("active_workflows") or []
+
+        ctx["workflows"] = workflows
+
         # 3) Lightweight thread hint (no intent tree; just simple keywords to help the LLM)
         hint = _derive_thread_hint(user_message or "")
         # Always include thread_hint key to satisfy prompt templating

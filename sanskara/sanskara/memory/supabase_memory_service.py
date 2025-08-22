@@ -17,7 +17,26 @@ from google.genai import types  # for Content/Part classes
 EMBED_MODEL_NAME = "sentence-transformers/static-retrieval-mrl-en-v1"
 _EMBED_MODEL = SentenceTransformer(EMBED_MODEL_NAME, device="cpu")  # CPU only
 _EMBED_DIM = _EMBED_MODEL.get_sentence_embedding_dimension()
-logging.info(f"SupabaseMemoryService: Loaded embedding model '{EMBED_MODEL_NAME}' with dim={_EMBED_DIM}")
+logging.info(
+    f"SupabaseMemoryService: Loaded embedding model '{EMBED_MODEL_NAME}' with dim={_EMBED_DIM}"
+)
+
+def preload_embeddings(warmup_texts: Optional[List[str]] = None) -> int:
+    """Warm up the sentence transformer at process start to avoid first‑user latency.
+
+    Returns the embedding dimension. Any errors are logged and swallowed.
+    """
+    try:
+        texts = warmup_texts or [
+            "warmup",
+            "Sanskara AI startup warmup",
+        ]
+        # A tiny encode triggers any lazy initializations and BLAS kernels
+        _ = _EMBED_MODEL.encode(texts, show_progress_bar=False)
+        logging.info("Embedding model warmup completed (%d texts).", len(texts))
+    except Exception as e:
+        logging.debug("Embedding model warmup skipped/failed: %s", e)
+    return _EMBED_DIM
 
 class SupabaseMemoryService(BaseMemoryService):
     """Memory service using Supabase + pgvector + local CPU embeddings."""

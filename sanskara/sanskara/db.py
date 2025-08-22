@@ -25,3 +25,5 @@ if ASTRA_API_TOKEN and ASTRA_API_ENDPOINT:
         logging.error(f"Error initializing AstraDB client: {e}. astra_db will be None.")
 else:
     logging.warning("ASTRA_API_TOKEN or ASTRA_API_ENDPOINT not found. AstraDB client not initialized.")
+
+# Removed SQLAlchemy Async Engine setup for PostgreSQL

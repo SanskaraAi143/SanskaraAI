@@ -133,3 +133,26 @@ async def semantic_search_facts(
     except Exception as e:
         logging.error(f"semantic_search_facts error: {e}", exc_info=True)
         return {"facts": [], "sources": []}
+
+
+async def warmup_semantic_memory() -> None:
+    """Preload embedding backend so first query is fast. Ignored if unavailable.
+
+    Attempts to import and construct SupabaseMemoryService once. Any errors are swallowed
+    because semantic recall is optional per DISABLE_SEMANTIC_RECALL.
+    """
+    try:
+        if os.getenv("DISABLE_SEMANTIC_RECALL", "0") in ("1", "true", "True"):
+            return
+        try:
+            from sanskara.sanskara.memory.supabase_memory_service import SupabaseMemoryService  # type: ignore
+        except Exception:
+            try:
+                from sanskara.memory.supabase_memory_service import SupabaseMemoryService  # type: ignore
+            except Exception:
+                SupabaseMemoryService = None  # type: ignore
+        if 'SupabaseMemoryService' in locals() and SupabaseMemoryService is not None:
+            _ = SupabaseMemoryService()
+    except Exception:
+        # best-effort warmup only
+        pass
