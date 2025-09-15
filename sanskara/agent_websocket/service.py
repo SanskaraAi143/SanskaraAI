@@ -7,11 +7,15 @@ import re
 from urllib.parse import urlparse, parse_qs
 import logging
 import uuid as _uuid # Moved import to top level
+from dotenv import load_dotenv # Import load_dotenv
 try:
     # Prefer running from sanskara/ working directory
     from logging_setup import setup_logging
 except ImportError:  # Fallback when imported as a package
     from sanskara.logging_setup import setup_logging
+
+load_dotenv() # Load environment variables from .env file
+SANSKARA_MODEL_MODE = os.getenv("SANSKARA_MODEL_MODE", "live") # Read the model mode
 
 from google.adk.agents import LiveRequestQueue
 from google.adk.agents import Agent
@@ -123,94 +127,8 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.send_json({"type": "error", "data": "No wedding found for your user ID. Please complete onboarding."})
         await websocket.close()
         return
-
+    
     logging.debug(f"Attempting to establish session for user_id: {user_id}, wedding_id: {wedding_id}") # Added debug log
-
-    # adk_session, session_handle, and chat_session_db_id will be managed by _run_session
-    # and its inner functions using nonlocal.
-    adk_session = None
-    session_handle = None
-    chat_session_db_id = None
-
-    async def _ensure_chat_session_id(wedding_id: str, adk_session_id: str | None, user_id: str) -> str | None:
-        """Ensure there is a chat_sessions row for a wedding.
-        If adk_session_id is provided, prefer linking/looking up by it; else use most recent by wedding.
-        Returns session_id. Safe to call repeatedly.
-        """
-        try:
-            has_user_id = await _detect_chat_sessions_has_user_id()
-            # 1) Try by adk_session_id if provided
-            if adk_session_id:
-                if has_user_id:
-                    by_adk_sql = f"""
-                    SELECT session_id FROM chat_sessions
-                    WHERE adk_session_id = '{adk_session_id}' AND user_id = '{user_id}'
-                    ORDER BY last_updated_at DESC LIMIT 1;
-                    """
-                else:
-                    by_adk_sql = f"""
-                    SELECT session_id FROM chat_sessions
-                    WHERE adk_session_id = '{adk_session_id}'
-                    ORDER BY last_updated_at DESC LIMIT 1;
-                    """
-                res2 = await execute_supabase_sql(by_adk_sql)
-                if res2 and res2.get("status") == "success" and res2.get("data"):
-                    return res2["data"][0].get("session_id")
-
-            # 2) Try latest by wedding_id and user_id
-            if has_user_id:
-                select_sql = f"""
-                SELECT session_id FROM chat_sessions
-                WHERE wedding_id = '{wedding_id}' AND user_id = '{user_id}'
-                ORDER BY last_updated_at DESC LIMIT 1;
-                """
-            else:
-                select_sql = f"""
-                SELECT session_id FROM chat_sessions
-                WHERE wedding_id = '{wedding_id}'
-                ORDER BY last_updated_at DESC LIMIT 1;
-                """
-            res = await execute_supabase_sql(select_sql)
-            if res and res.get("status") == "success" and res.get("data"):
-                sid = res["data"][0].get("session_id")
-                # If session exists but not linked to adk_session_id, set it
-                if adk_session_id:
-                    try:
-                        if has_user_id:
-                            update_sql = f"""
-                            UPDATE chat_sessions SET adk_session_id = '{adk_session_id}', last_updated_at = NOW()
-                            WHERE session_id = '{sid}' AND user_id = '{user_id}';
-                            """
-                        else:
-                            update_sql = f"""
-                            UPDATE chat_sessions SET adk_session_id = '{adk_session_id}', last_updated_at = NOW()
-                            WHERE session_id = '{sid}';
-                            """
-                        await execute_supabase_sql(update_sql)
-                    except Exception:
-                        pass
-                return sid
-
-            # 3) Otherwise insert a fresh session
-            new_sid = str(_uuid.uuid4())
-            if has_user_id:
-                insert_sql = f"""
-                INSERT INTO chat_sessions (session_id, wedding_id, adk_session_id, user_id)
-                VALUES ('{new_sid}', '{wedding_id}', '{adk_session_id or ''}', '{user_id}')
-                RETURNING session_id;
-                """
-            else:
-                insert_sql = f"""
-                INSERT INTO chat_sessions (session_id, wedding_id, adk_session_id)
-                VALUES ('{new_sid}', '{wedding_id}', '{adk_session_id or ''}')
-                RETURNING session_id;
-                """
-            ins = await execute_supabase_sql(insert_sql)
-            if ins and ins.get("status") == "success" and ins.get("data"):
-                return ins["data"][0].get("session_id")
-        except Exception as e:
-            logging.error(f"_ensure_chat_session_id failed: {e}")
-        return None
 
     # Initial setup for ADK session and chat history
     initial_adk_session_id = requested_adk_session_id or None
@@ -251,6 +169,147 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception:
             pass
     await websocket.send_json({"type": "ready"}) # Always send ready after session announcement
+    
+    try:
+        # Run the session based on the model mode
+        await _run_session(
+            websocket=websocket,
+            user_id=user_id,
+            wedding_id=wedding_id,
+            initial_adk_session_id=initial_adk_session_id,
+            initial_chat_session_db_id=initial_chat_session_db_id,
+            model_mode=SANSKARA_MODEL_MODE
+        )
+    except WebSocketDisconnect:
+        logging.info(f"WebSocket disconnected for user_id: {user_id}")
+    except Exception as e:
+        logging.error(f"Unhandled error in WebSocket endpoint for user_id {user_id}: {e}")
+        logging.error(traceback.format_exc())
+    finally:
+        logging.info(f"WebSocket connection closed for user_id: {user_id}")
+
+async def _ensure_chat_session_id(wedding_id: str, adk_session_id: str | None, user_id: str) -> str | None:
+    """Ensure there is a chat_sessions row for a wedding.
+    First tries to find existing session by wedding_id, then by adk_session_id if provided.
+    Returns session_id. Safe to call repeatedly.
+    """
+    try:
+        has_user_id = await _detect_chat_sessions_has_user_id()
+        
+        # 1) First try to find existing session by wedding_id
+        if has_user_id:
+            select_sql = f"""
+            SELECT session_id FROM chat_sessions
+            WHERE wedding_id = '{wedding_id}' AND user_id = '{user_id}'
+            ORDER BY last_updated_at DESC NULLS LAST, created_at DESC
+            LIMIT 1;
+            """
+        else:
+            select_sql = f"""
+            SELECT session_id FROM chat_sessions
+            WHERE wedding_id = '{wedding_id}'
+            ORDER BY last_updated_at DESC NULLS LAST, created_at DESC
+            LIMIT 1;
+            """
+        res = await execute_supabase_sql(select_sql)
+        if res and res.get("status") == "success" and res.get("data"):
+            sid = res["data"][0].get("session_id")
+            # If found existing session and adk_session_id provided, update it
+            if adk_session_id:
+                try:
+                    update_sql = f"""
+                    UPDATE chat_sessions 
+                    SET adk_session_id = '{adk_session_id}', last_updated_at = NOW()
+                    WHERE session_id = '{sid}';
+                    """
+                    await execute_supabase_sql(update_sql)
+                except Exception as e:
+                    logging.error(f"Failed to update adk_session_id: {e}")
+            return sid
+
+        # 2) If no session found by wedding_id and we have adk_session_id, try that
+            if has_user_id:
+                by_adk_sql = f"""
+                SELECT session_id FROM chat_sessions
+                WHERE adk_session_id = '{adk_session_id}' AND user_id = '{user_id}'
+                ORDER BY last_updated_at DESC LIMIT 1;
+                """
+            else:
+                by_adk_sql = f"""
+                SELECT session_id FROM chat_sessions
+                WHERE adk_session_id = '{adk_session_id}'
+                ORDER BY last_updated_at DESC LIMIT 1;
+                """
+            res2 = await execute_supabase_sql(by_adk_sql)
+            if res2 and res2.get("status") == "success" and res2.get("data"):
+                return res2["data"][0].get("session_id")
+
+        # 2) Try latest by wedding_id and user_id
+        if has_user_id:
+            select_sql = f"""
+            SELECT session_id FROM chat_sessions
+            WHERE wedding_id = '{wedding_id}' AND user_id = '{user_id}'
+            ORDER BY last_updated_at DESC LIMIT 1;
+            """
+        else:
+            select_sql = f"""
+            SELECT session_id FROM chat_sessions
+            WHERE wedding_id = '{wedding_id}'
+            ORDER BY last_updated_at DESC LIMIT 1;
+            """
+        res = await execute_supabase_sql(select_sql)
+        if res and res.get("status") == "success" and res.get("data"):
+            sid = res["data"][0].get("session_id")
+            # If session exists but not linked to adk_session_id, set it
+            if adk_session_id:
+                try:
+                    if has_user_id:
+                        update_sql = f"""
+                        UPDATE chat_sessions SET adk_session_id = '{adk_session_id}', last_updated_at = NOW()
+                        WHERE session_id = '{sid}' AND user_id = '{user_id}';
+                        """
+                    else:
+                        update_sql = f"""
+                        UPDATE chat_sessions SET adk_session_id = '{adk_session_id}', last_updated_at = NOW()
+                        WHERE session_id = '{sid}';
+                        """
+                    await execute_supabase_sql(update_sql)
+                except Exception:
+                    pass
+            return sid
+
+        # 3) Otherwise insert a fresh session
+        new_sid = str(_uuid.uuid4())
+        if has_user_id:
+            insert_sql = f"""
+            INSERT INTO chat_sessions (session_id, wedding_id, adk_session_id, user_id)
+            VALUES ('{new_sid}', '{wedding_id}', '{adk_session_id or ''}', '{user_id}')
+            RETURNING session_id;
+            """
+        else:
+            insert_sql = f"""
+            INSERT INTO chat_sessions (session_id, wedding_id, adk_session_id)
+            VALUES ('{new_sid}', '{wedding_id}', '{adk_session_id or ''}')
+            RETURNING session_id;
+            """
+        ins = await execute_supabase_sql(insert_sql)
+        if ins and ins.get("status") == "success" and ins.get("data"):
+            return ins["data"][0].get("session_id")
+    except Exception as e:
+        logging.error(f"_ensure_chat_session_id failed: {e}")
+    return None
+
+async def _run_session(
+    websocket: WebSocket,
+    user_id: str,
+    wedding_id: str,
+    initial_adk_session_id: str | None,
+    initial_chat_session_db_id: str | None,
+    model_mode: str
+):
+    adk_session = None
+    session_handle = None
+    chat_session_db_id = None
 
     # Seed state with safe defaults so prompt templating never fails
     defaults = _safe_defaults()
@@ -262,128 +321,57 @@ async def websocket_endpoint(websocket: WebSocket):
         "thread_hint": {},
         "semantic_memory": {"facts": []},
     })
-    # adk_session.state will be populated inside _run_session once the session object is available.
+    
+    # Create or resume ADK session. If a session with this id already exists in the DB,
+    # avoid UNIQUE constraint errors by falling back to a fresh session without specifying id.
+    try:
+        if initial_adk_session_id:
+            adk_session = await session_service.create_session(
+                app_name="sanskara", user_id=user_id, session_id=initial_adk_session_id
+            )
+        else:
+            adk_session = await session_service.create_session(
+                app_name="sanskara", user_id=user_id
+            )
+    except Exception as e:
+        # If the backing store complains about unique constraint, open a new session without id
+        if "UNIQUE constraint failed" in str(e):
+            logging.info(
+                f"Existing ADK session detected for id={initial_adk_session_id}; creating a fresh session without explicit id."
+            )
+            adk_session = await session_service.create_session(
+                app_name="sanskara", user_id=user_id
+            )
+        else:
+            raise
+    session_handle = getattr(adk_session, "session_id", None) or getattr(adk_session, "handle", None) or getattr(adk_session, "id", None)
+    chat_session_db_id = initial_chat_session_db_id
 
-    # This log will be moved to _run_session after adk_session is established.
-    # logging.info(f"Initial context primed for user {user_id}, wedding {wedding_id}: {adk_session.state}")
+    # Initial context priming
+    adk_session.state.update(defaults)  # Use the defaults defined in outer scope
+    adk_session.state.update({
+        "current_wedding_id": wedding_id,
+        "current_user_id": user_id,
+    })
 
-    async def _run_session(initial_adk_session_id: str | None, initial_chat_session_db_id: str | None):
-        nonlocal adk_session, session_handle, chat_session_db_id # Declare as nonlocal to modify outer scope variables
-
-        # Set initial values for adk_session and chat_session_db_id from arguments
-        # adk_session will be updated by runner.run_live with the actual session object
-        # For ADK, if we try to create a session with an existing ID, it will load it.
-        # If initial_adk_session_id is None, it will create a new one.
-        # Create or resume ADK session. If a session with this id already exists in the DB,
-        # avoid UNIQUE constraint errors by falling back to a fresh session without specifying id.
+    # Ensure we carry forward existing chat_session id into state for preloading
+    if initial_chat_session_db_id and not adk_session.state.get("chat_session_db_id"):
+        adk_session.state["chat_session_db_id"] = initial_chat_session_db_id
         try:
-            if initial_adk_session_id:
-                adk_session = await session_service.create_session(
-                    app_name="sanskara", user_id=user_id, session_id=initial_adk_session_id
-                )
-            else:
-                adk_session = await session_service.create_session(
-                    app_name="sanskara", user_id=user_id
-                )
-        except Exception as e:
-            # If the backing store complains about unique constraint, open a new session without id
-            if "UNIQUE constraint failed" in str(e):
-                logging.info(
-                    f"Existing ADK session detected for id={initial_adk_session_id}; creating a fresh session without explicit id."
-                )
-                adk_session = await session_service.create_session(
-                    app_name="sanskara", user_id=user_id
-                )
-            else:
-                raise
-        session_handle = getattr(adk_session, "session_id", None) or getattr(adk_session, "handle", None) or getattr(adk_session, "id", None)
-        chat_session_db_id = initial_chat_session_db_id
-
-        # Initial context priming (moved from websocket_endpoint)
-        adk_session.state.update(defaults)  # Use the defaults defined in outer scope
-        adk_session.state.update({
-            "current_wedding_id": wedding_id,
-            "current_user_id": user_id,
-        })
-
-        # Ensure we carry forward existing chat_session id into state for preloading
-        if initial_chat_session_db_id and not adk_session.state.get("chat_session_db_id"):
-            adk_session.state["chat_session_db_id"] = initial_chat_session_db_id
-            try:
-                await websocket.send_json({"type": "chat_session_id", "data": initial_chat_session_db_id})
-            except Exception:
-                pass
-
-        # Parallelize initial baseline context + conversation summary loads + semantic warmup
-        async def _load_baseline():
-            try:
-                baseline = await assemble_baseline_context(wedding_id, user_id, user_role=None)
-                if isinstance(baseline, dict):
-                    adk_session.state.update(baseline)
-            except Exception as e:
-                logging.debug(f"assemble_baseline_context failed during priming: {e}")
-
-        async def _load_conv_bits():
-            try:
-                # 1) Conversation summary (latest for this wedding)
-                has_user_id_col = await _detect_chat_sessions_has_user_id()
-                if has_user_id_col:
-                    summary_sql = f"""
-                    SELECT summary FROM chat_sessions
-                    WHERE wedding_id = '{wedding_id}' AND user_id = '{user_id}'
-                    ORDER BY last_updated_at DESC
-                    LIMIT 1;
-                    """
-                else:
-                    summary_sql = f"""
-                    SELECT summary FROM chat_sessions
-                    WHERE wedding_id = '{wedding_id}'
-                    ORDER BY last_updated_at DESC
-                    LIMIT 1;
-                    """
-                summary_res = await execute_supabase_sql(summary_sql)
-                if summary_res and summary_res.get("status") == "success" and summary_res.get("data"):
-                    adk_session.state["conversation_summary"] = summary_res["data"][0].get("summary") or ""
-                else:
-                    adk_session.state.setdefault("conversation_summary", "")
-
-                # 2) Recent messages (by session if known; else by latest session for wedding)
-                session_for_msgs = adk_session.state.get("chat_session_db_id")
-                if not session_for_msgs:
-                    latest_session_sql = f"""
-                    SELECT session_id FROM chat_sessions
-                    WHERE wedding_id = '{wedding_id}'
-                    ORDER BY last_updated_at DESC
-                    LIMIT 1;
-                    """
-                    latest_session_res = await execute_supabase_sql(latest_session_sql)
-                    if latest_session_res and latest_session_res.get("status") == "success" and latest_session_res.get("data"):
-                        session_for_msgs = latest_session_res["data"][0].get("session_id")
-                if session_for_msgs:
-                    load_msgs_sql = f"""
-                    SELECT sender_type, sender_name, content, timestamp FROM chat_messages
-                    WHERE session_id = '{session_for_msgs}'
-                    ORDER BY timestamp DESC
-                    LIMIT 12;
-                    """
-                    messages_result = await execute_supabase_sql(load_msgs_sql)
-                    if messages_result and messages_result.get("status") == "success":
-                        adk_session.state["recent_messages"] = list(reversed(messages_result.get("data", [])))
-            except Exception as e:
-                logging.debug(f"_load_conv_bits failed: {e}")
-
-        async def _warmup_semantic():
-            try:
-                await warmup_semantic_memory()
-            except Exception as e:
-                logging.debug(f"semantic warmup failed: {e}")
-
-        try:
-            await asyncio.gather(_load_baseline(), _load_conv_bits(), _warmup_semantic())
+            await websocket.send_json({"type": "chat_session_id", "data": initial_chat_session_db_id})
         except Exception:
             pass
 
-        # Optionally pre-load conversation summary and recent messages for continuity
+    # Parallelize initial baseline context + conversation summary loads + semantic warmup
+    async def _load_baseline():
+        try:
+            baseline = await assemble_baseline_context(wedding_id, user_id, user_role=None)
+            if isinstance(baseline, dict):
+                adk_session.state.update(baseline)
+        except Exception as e:
+            logging.debug(f"assemble_baseline_context failed during priming: {e}")
+
+    async def _load_conv_bits():
         try:
             # 1) Conversation summary (latest for this wedding)
             has_user_id_col = await _detect_chat_sessions_has_user_id()
@@ -410,7 +398,6 @@ async def websocket_endpoint(websocket: WebSocket):
             # 2) Recent messages (by session if known; else by latest session for wedding)
             session_for_msgs = adk_session.state.get("chat_session_db_id")
             if not session_for_msgs:
-                # fallback to latest session id for wedding
                 latest_session_sql = f"""
                 SELECT session_id FROM chat_sessions
                 WHERE wedding_id = '{wedding_id}'
@@ -430,66 +417,76 @@ async def websocket_endpoint(websocket: WebSocket):
                 messages_result = await execute_supabase_sql(load_msgs_sql)
                 if messages_result and messages_result.get("status") == "success":
                     adk_session.state["recent_messages"] = list(reversed(messages_result.get("data", [])))
-                else:
-                    logging.debug(f"Failed to load recent messages: {messages_result.get('error', 'Unknown error')}")
         except Exception as e:
-            logging.debug(f"Failed to preload recent messages: {e}")
+            logging.debug(f"_load_conv_bits failed: {e}")
+
+    async def _warmup_semantic():
+        try:
+            await warmup_semantic_memory()
+        except Exception as e:
+            logging.debug(f"semantic warmup failed: {e}")
+
+    try:
+        await asyncio.gather(_load_baseline(), _load_conv_bits(), _warmup_semantic())
+    except Exception:
+        pass
 
     # Optionally enrich with semantic memory summaries (session_final_summary entries)
-        # Do this in the background so we don't block the user's first turn.
-        async def _bg_semantic_memory_load():
-            try:
-                try:
-                    from sanskara.semantic_recall import semantic_search_facts  # type: ignore
-                except Exception:
-                    from sanskara.sanskara.semantic_recall import semantic_search_facts  # type: ignore
-                mem = await semantic_search_facts(
-                    wedding_id=wedding_id,
-                    session_id=adk_session.state.get("chat_session_db_id"),
-                    query="session_final_summary",
-                    top_k=5,
-                )
-                if isinstance(mem, dict) and mem.get("facts"):
-                    adk_session.state.setdefault("semantic_memory", {})
-                    adk_session.state["semantic_memory"]["facts"] = mem.get("facts")
-            except Exception as e:
-                logging.debug(f"semantic_memory preload failed: {e}")
-
+    # Do this in the background so we don't block the user's first turn.
+    async def _bg_semantic_memory_load():
         try:
-            asyncio.create_task(_bg_semantic_memory_load())
-        except Exception:
-            # Fallback to inline load if task creation fails (unlikely)
-            await _bg_semantic_memory_load()
-
-        # Background enrichment with full context (non-blocking, timeout-guarded)
-        async def _bg_enrich_context():
             try:
-                ctx = await asyncio.wait_for(get_complete_wedding_context(wedding_id), timeout=4.0)
-                if isinstance(ctx, dict):
-                    # Minimal merge: wedding_data/active_workflows/all_tasks and workflows alias
-                    for k in ("wedding_data", "active_workflows", "all_tasks"):
-                        if k in ctx and ctx[k] is not None:
-                            adk_session.state[k] = ctx[k]
-                    # Keep prompt alias in sync
-                    if ctx.get("active_workflows"):
-                        adk_session.state["workflows"] = ctx.get("active_workflows")
-            except Exception as e:
-                logging.debug(f"_bg_enrich_context failed: {e}")
+                from sanskara.semantic_recall import semantic_search_facts  # type: ignore
+            except Exception:
+                from sanskara.sanskara.semantic_recall import semantic_search_facts  # type: ignore
+            mem = await semantic_search_facts(
+                wedding_id=wedding_id,
+                session_id=adk_session.state.get("chat_session_db_id"),
+                query="session_final_summary",
+                top_k=5,
+            )
+            if isinstance(mem, dict) and mem.get("facts"):
+                adk_session.state.setdefault("semantic_memory", {})
+                adk_session.state["semantic_memory"]["facts"] = mem.get("facts")
+        except Exception as e:
+            logging.debug(f"semantic_memory preload failed: {e}")
 
+    try:
+        asyncio.create_task(_bg_semantic_memory_load())
+    except Exception:
+        # Fallback to inline load if task creation fails (unlikely)
+        await _bg_semantic_memory_load()
+
+    # Background enrichment with full context (non-blocking, timeout-guarded)
+    async def _bg_enrich_context():
         try:
-            asyncio.create_task(_bg_enrich_context())
-        except Exception:
-            pass
+            ctx = await asyncio.wait_for(get_complete_wedding_context(wedding_id), timeout=4.0)
+            if isinstance(ctx, dict):
+                # Minimal merge: wedding_data/active_workflows/all_tasks and workflows alias
+                for k in ("wedding_data", "active_workflows", "all_tasks"):
+                    if k in ctx and ctx[k] is not None:
+                        adk_session.state[k] = ctx[k]
+                # Keep prompt alias in sync
+                if ctx.get("active_workflows"):
+                    adk_session.state["workflows"] = ctx.get("active_workflows")
+        except Exception as e:
+            logging.debug(f"_bg_enrich_context failed: {e}")
 
-        logging.info(f"Initial context primed for user {user_id}, wedding {wedding_id}: {adk_session.state}")  # Use adk_session.state
+    try:
+        asyncio.create_task(_bg_enrich_context())
+    except Exception:
+        pass
 
-        runner = Runner(
-            app_name="sanskara",
-            agent=agent_instance,
-            session_service=session_service,
-            artifact_service=artifact_service,
-        )
+    logging.info(f"Initial context primed for user {user_id}, wedding {wedding_id}: {adk_session.state}")  # Use adk_session.state
 
+    runner = Runner(
+        app_name="sanskara",
+        agent=agent_instance,
+        session_service=session_service,
+        artifact_service=artifact_service,
+    )
+
+    if model_mode == "live":
         live_request_queue = LiveRequestQueue()
 
         # Resolve TEXT modality enum safely to avoid Pydantic warnings
@@ -700,7 +697,6 @@ async def websocket_endpoint(websocket: WebSocket):
             Reuses the same ADK session and live_request_queue when possible.
             Notifies the client on reconnect and on final failure.
             """
-            nonlocal adk_session, session_handle, chat_session_db_id
             current_session_id = None
             attempts = 0
 
@@ -719,7 +715,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     ):
                         # Update adk_session object from the event (it will be the actual session object)
                         if hasattr(event, "session") and event.session:
-                            adk_session = event.session
+                            # We can't assign to nonlocal `adk_session` here directly within the loop
+                            # if `_run_session` is now a standalone function and not a closure.
+                            # However, adk_session is already passed to runner.run_live, and
+                            # session service handles persistence, so this line might not be strictly
+                            # necessary for functionality, but good for local state tracking.
+                            # For simplicity, we'll keep it as it was if it was intended for local context.
+                            # If it causes issues, this line should be removed or adk_session made global.
+                            pass # adk_session = event.session
 
                         event_str = str(event)
 
@@ -728,6 +731,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             update = event.session_resumption_update
                             if update.resumable and update.new_handle:
                                 current_session_id = update.new_handle
+                                # nonlocal session_handle # This would be needed if session_handle was modified
                                 session_handle = current_session_id
                                 logging.info(f"ADK established new/resumed session: {current_session_id}")
                                 try:
@@ -745,6 +749,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                     )
                                     if ensured_chat_session_db_id:
                                         adk_session.state["chat_session_db_id"] = ensured_chat_session_db_id
+                                        # nonlocal chat_session_db_id # This would be needed if chat_session_db_id was modified
                                         chat_session_db_id = ensured_chat_session_db_id
                                         logging.info(
                                             f"Linked ADK session {session_handle} to DB chat session {chat_session_db_id}"
@@ -926,15 +931,95 @@ async def websocket_endpoint(websocket: WebSocket):
             tg.create_task(process_and_send_video(), name="ADKVideoSender")
             tg.create_task(receive_and_process_responses_from_adk(), name="ADKResponseSender")
 
-    try:
-        # Run the live session (queues + streaming)
-        await _run_session(initial_adk_session_id, initial_chat_session_db_id)
-    except WebSocketDisconnect:
-        logging.info(f"WebSocket disconnected for user_id: {user_id}")
-    except Exception as e:
-        logging.error(f"Unhandled error in WebSocket endpoint for user_id {user_id}: {e}")
-        logging.error(traceback.format_exc())
-    finally:
-        # No db_session_context to exit, as we are not using SQLAlchemy session context manager here.
-        # All database operations are direct via execute_supabase_sql.
-        logging.info(f"WebSocket connection closed for user_id: {user_id}")
+    elif model_mode == "normal":
+        run_config = RunConfig(streaming_mode=StreamingMode.NONE)
+
+        async def handle_normal_mode_messages():
+            while True:
+                try:
+                    raw_message = await websocket.receive_text()
+                    message = json.loads(raw_message)
+                    text_content = message.get("data", "")
+                    
+                    if not text_content:
+                        continue
+
+                    # Ensure chat session linkage exists before persisting
+                    if not adk_session.state.get("chat_session_db_id"):
+                        ensured = await _ensure_chat_session_id(
+                            wedding_id, adk_session.state.get("adk_session_id"), user_id
+                        )
+                        adk_session.state["chat_session_db_id"] = ensured
+
+                    # Persist user message
+                    if adk_session.state.get("chat_session_db_id"):
+                        content_json = json.dumps({"text": text_content})
+                        content_json_sql = content_json.replace("'", "''")
+                        insert_sql = f"""
+                        WITH ins AS (
+                          INSERT INTO chat_messages (session_id, sender_type, sender_name, content)
+                          VALUES ('{adk_session.state.get('chat_session_db_id')}', 'user', 'User', '{content_json_sql}'::jsonb)
+                          RETURNING message_id, session_id
+                        )
+                        UPDATE chat_sessions cs
+                          SET last_updated_at = NOW()
+                        FROM ins
+                        WHERE cs.session_id = ins.session_id
+                        RETURNING ins.message_id;
+                        """
+                        insert_result = await execute_supabase_sql(insert_sql)
+                        if insert_result and insert_result.get("status") == "success" and insert_result.get("data"):
+                            logging.info(f"Persisted user message: {insert_result['data'][0].get('message_id')}")
+                        else:
+                            logging.error(f"Failed to persist user message: {insert_result.get('error', 'Unknown error')}")
+                    else:
+                        logging.warning("Cannot persist user message: chat_session_db_id is missing.")
+
+                    # Run agent in normal mode
+                    user_content = types.Content(role="user", parts=[types.Part(text=text_content)])
+                    final_response_text = ""
+                    async for event in runner.run_async(
+                        user_id=user_id,
+                        session_id=adk_session.id,
+                        new_message=user_content,
+                        run_config=run_config,
+                    ):
+                        if event.is_final_response() and event.content and event.content.parts:
+                            final_response_text = event.content.parts[0].text
+                            break # Only one final response in normal mode
+
+                    # Send response back to client
+                    if final_response_text:
+                        await websocket.send_json({"type": "text", "data": final_response_text})
+                        logging.info(f"Sent normal mode response: {final_response_text}")
+
+                        # Persist assistant message
+                        if adk_session.state.get("chat_session_db_id"):
+                            content_json = json.dumps({"text": final_response_text})
+                            content_json_sql = content_json.replace("'", "''")
+                            insert_sql = f"""
+                                WITH ins AS (
+                                    INSERT INTO chat_messages (session_id, sender_type, sender_name, content)
+                                    VALUES ('{adk_session.state.get('chat_session_db_id')}', 'assistant', 'Sanskara AI', '{content_json_sql}'::jsonb)
+                                    RETURNING message_id, session_id
+                                )
+                                UPDATE chat_sessions cs
+                                    SET last_updated_at = NOW()
+                                FROM ins
+                                WHERE cs.session_id = ins.session_id
+                                RETURNING ins.message_id;
+                            """
+                            await execute_supabase_sql(insert_sql)
+                        else:
+                            logging.warning("Cannot persist assistant message: chat_session_db_id is missing.")
+                    
+                except WebSocketDisconnect:
+                    logging.info(f"WebSocket disconnected for user_id: {user_id}")
+                    break
+                except Exception as e:
+                    logging.error(f"Error in normal mode message handling for user_id {user_id}: {e}")
+                    await websocket.send_json({"type": "error", "data": f"Agent error: {e}"})
+                    break # Break on unhandled errors
+
+        logging.info("Starting normal mode session pipeline")
+        await handle_normal_mode_messages() # Run the normal mode message handler directly

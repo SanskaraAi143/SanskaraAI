@@ -869,3 +869,28 @@ def update_chat_session_last_updated_at_query(session_id: str) -> str:
         SET last_updated_at = NOW()
         WHERE session_id = '{session_id}';
     """
+
+from sqlalchemy.orm import Session
+from typing import List
+
+def get_adk_session_ids_for_wedding(db: Session, wedding_id: str) -> List[str]:
+    """
+    Retrieve all ADK session IDs for a given wedding ID from the chat_sessions table.
+
+    Args:
+        db (Session): SQLAlchemy database session.
+        wedding_id (str): The wedding ID to filter chat sessions.
+
+    Returns:
+        List[str]: A list of ADK session IDs.
+    """
+    query = db.execute(
+        """
+        SELECT adk_session_id
+        FROM chat_sessions
+        WHERE wedding_id = :wedding_id
+        AND adk_session_id IS NOT NULL;
+        """,
+        {"wedding_id": wedding_id}
+    )
+    return [row["adk_session_id"] for row in query.fetchall()]

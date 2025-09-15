@@ -7,7 +7,7 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools import agent_tool
 import os
 from google.genai import types
-
+from google.adk.planners.plan_re_act_planner import PlanReActPlanner
 from sanskara.sub_agents.setup_agent.agent import setup_agent
 from sanskara.sub_agents.vendor_management_agent.agent import vendor_management_agent
 from sanskara.sub_agents.budget_and_expense_agent.agent import budget_and_expense_agent
@@ -601,6 +601,7 @@ orchestrator_agent = LlmAgent(
     model="gemini-2.0-flash-live-001",
     description="Orchestrates the entire user workflow for Sanskara AI, including onboarding, ritual search, budget management, and vendor search. The user only interacts with this agent.",
     instruction=ORCHESTRATOR_AGENT_PROMPT,
+    planner=PlanReActPlanner(),
     sub_agents=[
         # setup_agent,
         # vendor_management_agent,
@@ -618,9 +619,9 @@ orchestrator_agent = LlmAgent(
         get_current_datetime,
         upsert_workflow,
         upsert_task,
-    add_task_feedback,
+        add_task_feedback,
         get_complete_wedding_context,
-    set_task_approval,
+        set_task_approval,
         vendor_management_agent_tool,
         budget_and_expense_agent_tool,
         ritual_and_cultural_agent_tool,
