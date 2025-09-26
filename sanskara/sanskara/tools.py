@@ -8,6 +8,7 @@ from google.adk.tools.tool_context import ToolContext
 
 from sanskara.helpers import execute_supabase_sql
 import logging # Import the custom JSON logger
+from sanskara.cache import invalidate_cache
 
 # Restrict exported symbols so deprecated names (e.g. list_artifacts_for_current_session) are NOT auto-exposed
 __all__ = [
@@ -110,28 +111,24 @@ async def get_tasks_for_wedding(wedding_id: str, status: Optional[str] = None, l
         logging.error(f"Error fetching tasks for {wedding_id}: {e}")
         return {"error": str(e)}
 
-async def update_workflow_status(workflow_id: str, new_status: str, context_summary: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+async def update_workflow_status(workflow_id: str, new_status: str, context_summary: Optional[Dict[str, Any]] = None, tool_context: Optional[ToolContext] = None) -> Dict[str, Any]:
     """
     Updates the status and optionally the context summary of a workflow.
-
-    Args:
-        workflow_id: The UUID of the workflow to update.
-        new_status: The new status for the workflow (e.g., 'completed', 'paused', 'in_progress').
-        context_summary: Optional. A JSONB object to update the context_summary column.
-
-    Returns:
-        A dictionary indicating success or failure.
+    Also invalidates the wedding context cache.
     """
     sql = "UPDATE workflows SET status = :new_status, updated_at = NOW()"
     params = {"new_status": new_status, "workflow_id": workflow_id}
     if context_summary is not None:
         sql += ", context_summary = :context_summary"
-        params["context_summary"] = json.dumps(context_summary) # Supabase expects JSON string for JSONB
-    sql += " WHERE workflow_id = :workflow_id RETURNING *;"
+        params["context_summary"] = json.dumps(context_summary)
+    sql += " WHERE workflow_id = :workflow_id RETURNING wedding_id;"
     
     try:
         result = await execute_supabase_sql(sql, params)
-        if result and result.get("status") == "success":
+        if result and result.get("status") == "success" and result.get("data"):
+            wedding_id = result["data"][0].get("wedding_id")
+            if wedding_id:
+                invalidate_cache(f"context:wedding:{wedding_id}")
             return {"status": "success", "data": result.get("data")}
         else:
             return {"status": "error", "message": result.get("error", "Unknown error during workflow status update")}
@@ -183,20 +180,11 @@ async def upsert_workflow(
     wedding_id: str,
     workflow_name: str,
     status: str = 'not_started',
-    context_summary: Optional[Dict[str, Any]] = None
+    context_summary: Optional[Dict[str, Any]] = None,
+    tool_context: Optional[ToolContext] = None
 ) -> Dict[str, Any]:
     """
-    Creates a new workflow or updates an existing one if a workflow with the same
-    wedding_id and workflow_name already exists.
-
-    Args:
-        wedding_id: The UUID of the wedding this workflow belongs to.
-        workflow_name: The name of the workflow (e.g., 'CoreVendorBookingWorkflow').
-        status: The initial status of the workflow (default: 'not_started').
-        context_summary: Optional. A JSONB object for initial context.
-
-    Returns:
-        A dictionary containing the created/updated workflow's data or an error.
+    Creates a new workflow or updates an existing one, and invalidates the wedding context cache.
     """
     # First, try to find an existing workflow
     sql_select = "SELECT workflow_id FROM workflows WHERE wedding_id = :wedding_id AND workflow_name = :workflow_name;"
@@ -206,29 +194,26 @@ async def upsert_workflow(
         result_select = await execute_supabase_sql(sql_select, params_select)
         
         if result_select and result_select.get("status") == "success" and result_select.get("data"):
-            # Workflow exists, update it
             existing_workflow_id = result_select["data"][0]["workflow_id"]
             logging.info(f"Workflow '{workflow_name}' already exists for wedding {wedding_id}. Updating.")
-            return await update_workflow_status(existing_workflow_id, status, context_summary)
+            result = await update_workflow_status(existing_workflow_id, status, context_summary, tool_context)
         else:
-            # Workflow does not exist, create a new one
             logging.info(f"Workflow '{workflow_name}' does not exist for wedding {wedding_id}. Creating new.")
-            return await create_workflow(wedding_id, workflow_name, status, context_summary)
+            result = await create_workflow(wedding_id, workflow_name, status, context_summary)
+
+        # Invalidate cache on successful upsert
+        if result.get("status") == "success":
+            invalidate_cache(f"context:wedding:{wedding_id}")
+
+        return result
             
     except Exception as e:
         logging.error(f"Error in upsert_workflow for {workflow_name} (wedding {wedding_id}): {e}")
         return {"status": "error", "message": str(e)}
 
-async def update_task_details(task_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+async def update_task_details(task_id: str, updates: Dict[str, Any], tool_context: Optional[ToolContext] = None) -> Dict[str, Any]:
     """
-    Updates details of an existing task in the 'tasks' table.
-
-    Args:
-        task_id: The UUID of the task to update.
-        updates: A dictionary of columns and their new values (e.g., {"status": "completed", "due_date": "2024-12-31"}).
-
-    Returns:
-        A dictionary indicating success or failure.
+    Updates details of an existing task and invalidates the wedding context cache.
     """
     if not updates:
         return {"status": "error", "message": "No updates provided."}
@@ -239,11 +224,14 @@ async def update_task_details(task_id: str, updates: Dict[str, Any]) -> Dict[str
         set_clauses.append(f"{key} = :{key}")
         params[key] = value
     
-    sql = f"UPDATE tasks SET {', '.join(set_clauses)}, updated_at = NOW() WHERE task_id = :task_id RETURNING *;"
+    sql = f"UPDATE tasks SET {', '.join(set_clauses)}, updated_at = NOW() WHERE task_id = :task_id RETURNING wedding_id;"
     
     try:
         result = await execute_supabase_sql(sql, params)
-        if result and result.get("status") == "success":
+        if result and result.get("status") == "success" and result.get("data"):
+            wedding_id = result["data"][0].get("wedding_id")
+            if wedding_id:
+                invalidate_cache(f"context:wedding:{wedding_id}")
             return {"status": "success", "data": result.get("data")}
         else:
             return {"status": "error", "message": result.get("error", "Unknown error during task update")}
@@ -312,31 +300,16 @@ async def upsert_task(
     title: str,
     description: Optional[str] = None,
     is_complete: bool = False,
-    due_date: Optional[str] = None, # Assuming YYYY-MM-DD format
+    due_date: Optional[str] = None,
     priority: str = 'medium',
     category: Optional[str] = None,
     status: str = 'No Status',
-    lead_party: Optional[str] = None
+    lead_party: Optional[str] = None,
+    tool_context: Optional[ToolContext] = None
 ) -> Dict[str, Any]:
     """
-    Creates a new task or updates an existing one if a task with the same
-    wedding_id and title already exists.
-
-    Args:
-        wedding_id: The UUID of the wedding this task belongs to.
-        title: The title of the task.
-        description: Optional. A detailed description of the task.
-        is_complete: Whether the task is completed (default: False).
-        due_date: Optional. The due date of the task in YYYY-MM-DD format.
-        priority: The priority of the task (default: 'medium').
-        category: Optional. The category of the task.
-        status: The status of the task (default: 'No Status').
-        lead_party: Optional. The responsible party ('bride_side', 'groom_side', 'couple').
-
-    Returns:
-        A dictionary containing the created/updated task's data or an error.
+    Creates a new task or updates an existing one, and invalidates the wedding context cache.
     """
-    # First, try to find an existing task
     sql_select = "SELECT task_id FROM tasks WHERE wedding_id = :wedding_id AND title = :title;"
     params_select = {"wedding_id": wedding_id, "title": title}
     
@@ -344,28 +317,25 @@ async def upsert_task(
         result_select = await execute_supabase_sql(sql_select, params_select)
         
         if result_select and result_select.get("status") == "success" and result_select.get("data"):
-            # Task exists, update it
             existing_task_id = result_select["data"][0]["task_id"]
             logging.info(f"Task '{title}' already exists for wedding {wedding_id}. Updating.")
-            updates = {
-                "description": description,
-                "is_complete": is_complete,
-                "due_date": due_date,
-                "priority": priority,
-                "category": category,
-                "status": status,
-                "lead_party": lead_party
-            }
-            # Filter out None values from updates to avoid overwriting with None if not provided
-            updates = {k: v for k, v in updates.items() if v is not None}
-            return await update_task_details(existing_task_id, updates)
+            updates = {k: v for k, v in {
+                "description": description, "is_complete": is_complete, "due_date": due_date,
+                "priority": priority, "category": category, "status": status, "lead_party": lead_party
+            }.items() if v is not None}
+            result = await update_task_details(existing_task_id, updates, tool_context)
         else:
-            # Task does not exist, create a new one
             logging.info(f"Task '{title}' does not exist for wedding {wedding_id}. Creating new.")
-            return await create_task(
+            result = await create_task(
                 wedding_id, title, description, is_complete, due_date,
                 priority, category, status, lead_party
             )
+
+        # Invalidate cache on successful upsert
+        if result.get("status") == "success":
+            invalidate_cache(f"context:wedding:{wedding_id}")
+
+        return result
             
     except Exception as e:
         logging.error(f"Error in upsert_task for {title} (wedding {wedding_id}): {e}")
@@ -398,24 +368,16 @@ async def add_task_feedback(
     user_id: str,
     content: str,
     feedback_type: Optional[str] = None,
+    tool_context: Optional[ToolContext] = None
 ) -> Dict[str, Any]:
     """
-    Inserts a feedback entry for a task into task_feedback.
-
-    Args:
-        task_id: Task identifier.
-        user_id: Authoring user id.
-        content: Feedback text/content.
-        feedback_type: Optional tag (e.g., 'comment', 'like', 'concern').
-
-    Returns:
-        {status, data|message}
+    Inserts a feedback entry for a task and invalidates the wedding context cache.
     """
     sql = (
         """
         INSERT INTO task_feedback (task_id, user_id, feedback_type, content)
         VALUES (:task_id, :user_id, :feedback_type, :content)
-        RETURNING *;
+        RETURNING (SELECT wedding_id FROM tasks WHERE task_id = :task_id);
         """
     )
     params = {
@@ -426,7 +388,10 @@ async def add_task_feedback(
     }
     try:
         result = await execute_supabase_sql(sql, params)
-        if result and result.get("status") == "success":
+        if result and result.get("status") == "success" and result.get("data"):
+            wedding_id = result["data"][0].get("wedding_id")
+            if wedding_id:
+                invalidate_cache(f"context:wedding:{wedding_id}")
             return {"status": "success", "data": result.get("data")}
         else:
             return {"status": "error", "message": result.get("error", "Unknown error adding feedback")}
@@ -461,24 +426,16 @@ async def set_task_approval(
     approving_party: str,
     status: str,
     approved_by_user_id: Optional[str] = None,
+    tool_context: Optional[ToolContext] = None
 ) -> Dict[str, Any]:
     """
-    Inserts an approval record (e.g., 'approved'/'rejected') into task_approvals.
-
-    Args:
-        task_id: Task identifier.
-        approving_party: e.g., 'bride', 'groom', 'couple', 'parent'.
-        status: 'approved' | 'rejected' | 'needs_changes' | custom states.
-        approved_by_user_id: Optional explicit user id performing approval.
-
-    Returns:
-        {status, data|message}
+    Inserts a task approval record and invalidates the wedding context cache.
     """
     sql = (
         """
         INSERT INTO task_approvals (task_id, approving_party, status, approved_by_user_id)
         VALUES (:task_id, :approving_party, :status, :approved_by_user_id)
-        RETURNING *;
+        RETURNING (SELECT wedding_id FROM tasks WHERE task_id = :task_id);
         """
     )
     params = {
@@ -489,7 +446,10 @@ async def set_task_approval(
     }
     try:
         result = await execute_supabase_sql(sql, params)
-        if result and result.get("status") == "success":
+        if result and result.get("status") == "success" and result.get("data"):
+            wedding_id = result["data"][0].get("wedding_id")
+            if wedding_id:
+                invalidate_cache(f"context:wedding:{wedding_id}")
             return {"status": "success", "data": result.get("data")}
         else:
             return {"status": "error", "message": result.get("error", "Unknown error setting approval")}

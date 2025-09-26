@@ -102,7 +102,9 @@ CREATE TABLE tasks (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (wedding_id, title)
 );
-CREATE INDEX idx_task_wedding_id_status ON tasks (wedding_id, is_complete);
+-- The index on `is_complete` is replaced by a more effective index on `status`
+DROP INDEX IF EXISTS idx_task_wedding_id_status;
+CREATE INDEX idx_tasks_wedding_id_status ON tasks (wedding_id, status);
 
 CREATE TRIGGER set_tasks_updated_at
 BEFORE UPDATE ON tasks
@@ -133,6 +135,7 @@ CREATE TABLE task_approvals (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX idx_task_approvals_task_id ON task_approvals(task_id);
 
 CREATE TRIGGER set_task_approvals_updated_at
 BEFORE UPDATE ON task_approvals
@@ -154,7 +157,7 @@ CREATE TABLE budget_items (
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (wedding_id, item_name, category)
 );
-CREATE INDEX idx_budget_item_wedding_id ON budget_items (wedding_id);
+CREATE INDEX idx_budget_items_wedding_id_category ON budget_items (wedding_id, category);
 
 CREATE TRIGGER set_budget_items_updated_at
 BEFORE UPDATE ON budget_items
@@ -175,7 +178,7 @@ CREATE TABLE guest_list (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX idx_guest_list_wedding_id ON guest_list (wedding_id);
+CREATE INDEX idx_guest_list_wedding_id_status ON guest_list (wedding_id, status);
 
 CREATE TRIGGER set_guest_list_updated_at
 BEFORE UPDATE ON guest_list

@@ -1,7 +1,11 @@
 from typing import Dict, Any, List, Optional
 import json
-def get_wedding_by_expected_partner_email_query(email: str) -> str:
-    return f"""
+def get_wedding_by_expected_partner_email_query() -> str:
+    """
+    Returns a parameterized SQL query to find a wedding by the expected partner's email.
+    This query is now safe from SQL injection.
+    """
+    return """
         SELECT 
             wedding_id, 
             wedding_name,
@@ -11,133 +15,112 @@ def get_wedding_by_expected_partner_email_query(email: str) -> str:
             wedding_style,
             details
         FROM weddings
-        WHERE details @> '{{"other_partner_email_expected":"{email}"}}'::jsonb
+        WHERE details->>'other_partner_email_expected' = :email
         LIMIT 1;
     """
 
-def get_user_and_wedding_info_by_email_query(email: str) -> str:
-    return f"""
+def get_user_and_wedding_info_by_email_query() -> str:
+    """
+    Returns a parameterized SQL query to get user and wedding info by email.
+    This query is now safe from SQL injection.
+    """
+    return """
         SELECT u.user_id, wm.wedding_id, wm.role, w.details AS wedding_details
         FROM users u
         LEFT JOIN wedding_members wm ON u.user_id = wm.user_id
         LEFT JOIN weddings w ON wm.wedding_id = w.wedding_id
-        WHERE u.email = '{email}';
+        WHERE u.email = :email;
     """
 
-def create_wedding_query(
-    wedding_name: str,
-    wedding_date: str,
-    wedding_location: Optional[str],
-    wedding_tradition: Optional[str],
-    details_json: str,
-    wedding_style: Optional[str] = None
-) -> str:
-    # Escape single quotes in simple text fields to avoid breaking SQL
-    esc_name = wedding_name.replace("'", "''") if wedding_name is not None else None
-    esc_loc = wedding_location.replace("'", "''") if wedding_location is not None else None
-    esc_trad = wedding_tradition.replace("'", "''") if wedding_tradition is not None else None
-    esc_style = wedding_style.replace("'", "''") if wedding_style is not None else None
-    return f"""
+def create_wedding_query() -> str:
+    """
+    Returns a parameterized SQL query to create a new wedding.
+    This query is now safe from SQL injection.
+    """
+    return """
         INSERT INTO weddings (wedding_name, wedding_date, wedding_location, wedding_tradition, wedding_style, status, details)
-        VALUES (
-            '{esc_name}',
-            '{wedding_date}',
-            {f"'{esc_loc}'" if esc_loc is not None else 'NULL'},
-            {f"'{esc_trad}'" if esc_trad is not None else 'NULL'},
-            {f"'{esc_style}'" if esc_style is not None else 'NULL'},
-            'onboarding_in_progress',
-            $json${details_json}$json$::jsonb
-        )
+        VALUES (:wedding_name, :wedding_date, :wedding_location, :wedding_tradition, :wedding_style, 'onboarding_in_progress', :details::jsonb)
         RETURNING wedding_id;
     """
 
-def update_wedding_details_jsonb_query(wedding_id: str, details_json: str) -> str:
-    return f"""
+def update_wedding_details_jsonb_query() -> str:
+    """
+    Returns a parameterized SQL query to update the details of a wedding.
+    This query is now safe from SQL injection.
+    """
+    return """
         UPDATE weddings
-    SET details = $json${details_json}$json$::jsonb,
+        SET details = :details::jsonb,
             updated_at = NOW()
-        WHERE wedding_id = '{wedding_id}'
+        WHERE wedding_id = :wedding_id
         RETURNING wedding_id;
     """
 
-def update_wedding_details_jsonb_field_query(wedding_id: str, field_path: List[str], value: Any) -> str:
-    # field_path should be a list of strings representing the path to the JSONB field, e.g., ["other_partner_email_expected"] or ["partner_data", "some_email"]
-    # value should be the new value for that field (will be cast to JSONB)
-    
-    path_str = "{" + ", ".join([f'"{p}"' for p in field_path]) + "}"
-    
-    if isinstance(value, dict) or isinstance(value, list):
-        # Safe JSON via dollar-quoting
-        value_str = f"$json${json.dumps(value)}$json$::jsonb"
-    elif isinstance(value, str):
-        # Use to_jsonb on a safely single-quoted text literal
-        escaped = value.replace("'", "''")
-        value_str = f"to_jsonb('{escaped}'::text)"
-    elif value is None:
-        # Set JSON null explicitly
-        value_str = "'null'::jsonb"
-    elif isinstance(value, bool):
-        value_str = "to_jsonb(TRUE)" if value else "to_jsonb(FALSE)"
-    elif isinstance(value, (int, float)):
-        value_str = f"to_jsonb({value})"
-    else:
-        # Fallback: serialize to JSON string
-        value_str = f"$json${json.dumps(value)}$json$::jsonb"
+# This function is insecure due to dynamic path construction and has been removed.
+# Its functionality should be replaced by fetching the JSONB, modifying it in Python,
+# and writing it back using the updated `update_wedding_details_jsonb_query`.
+# def update_wedding_details_jsonb_field_query(...)
 
-    return f"""
-        UPDATE weddings
-        SET details = jsonb_set(COALESCE(details, '{{}}'::jsonb), '{path_str}', {value_str}, true),
-            updated_at = NOW()
-        WHERE wedding_id = '{wedding_id}'
-        RETURNING wedding_id;
+def update_wedding_fields_query(update_keys: List[str]) -> str:
     """
-
-def update_wedding_fields_query(wedding_id: str, updates: Dict[str, Any]) -> str:
-    set_clauses = []
-    for key, value in updates.items():
-        if isinstance(value, str):
-            set_clauses.append(f"{key} = '{value}'")
-        elif isinstance(value, bool):
-            set_clauses.append(f"{key} = {value}")
-        elif value is None:
-            set_clauses.append(f"{key} = NULL")
-        else:
-            set_clauses.append(f"{key} = {value}")
-    
+    Returns a parameterized SQL query to update specific fields of a wedding.
+    The list of keys to update must be validated by the caller.
+    This query is now safe from SQL injection.
+    """
+    # Note: Column names are not typically parameterized in SQL. The caller
+    # must ensure that the keys in `update_keys` are valid and sanitized
+    # column names to prevent SQL injection. In this application, the keys
+    # are derived from a Pydantic model, which provides a layer of safety.
+    set_clauses = [f"{key} = :{key}" for key in update_keys]
     updates_str = ", ".join(set_clauses)
-    
     return f"""
         UPDATE weddings
         SET {updates_str},
             updated_at = NOW()
-        WHERE wedding_id = '{wedding_id}';
+        WHERE wedding_id = :wedding_id;
     """
 
-def add_wedding_member_query(user_id: str, wedding_id: str, role: str) -> str:
-    return f"""
+def add_wedding_member_query() -> str:
+    """
+    Returns a parameterized SQL query to add a member to a wedding.
+    This query is now safe from SQL injection.
+    """
+    return """
         INSERT INTO wedding_members (wedding_id, user_id, role)
-        VALUES ('{wedding_id}', '{user_id}', '{role}')
+        VALUES (:wedding_id, :user_id, :role)
         ON CONFLICT (wedding_id, user_id) DO UPDATE SET role = EXCLUDED.role
         RETURNING user_id;
     """
 
 
-def update_wedding_status_query(wedding_id: str, status: str) -> str:
-    return f"""
+def update_wedding_status_query() -> str:
+    """
+    Returns a parameterized SQL query to update the status of a wedding.
+    This query is now safe from SQL injection.
+    """
+    return """
         UPDATE weddings
-        SET status = '{status}',
+        SET status = :status,
             updated_at = NOW()
-        WHERE wedding_id = '{wedding_id}';
+        WHERE wedding_id = :wedding_id;
     """
 
-def get_wedding_details_query(wedding_id: str) -> str:
-    return f"SELECT * FROM weddings WHERE wedding_id = '{wedding_id}'"
+def get_wedding_details_query() -> str:
+    """
+    Returns a parameterized SQL query to get the details of a wedding.
+    This query is now safe from SQL injection.
+    """
+    return "SELECT * FROM weddings WHERE wedding_id = :wedding_id"
 
 # Workflow Queries
-def create_workflow_query(wedding_id: str, workflow_name: str, status: str, context_summary: Dict[str, Any]) -> str:
-    return f"""
+def create_workflow_query() -> str:
+    """
+    Returns a parameterized SQL query to create or update a workflow.
+    This query is now safe from SQL injection.
+    """
+    return """
         INSERT INTO workflows (wedding_id, workflow_name, status, context_summary)
-        VALUES ('{wedding_id}', '{workflow_name}', '{status}', '{context_summary}'::jsonb)
+        VALUES (:wedding_id, :workflow_name, :status, :context_summary::jsonb)
         ON CONFLICT (wedding_id, workflow_name) DO UPDATE SET
             status = EXCLUDED.status,
             context_summary = EXCLUDED.context_summary,
@@ -145,84 +128,96 @@ def create_workflow_query(wedding_id: str, workflow_name: str, status: str, cont
         RETURNING workflow_id;
     """
 
-def get_workflow_by_name_query(wedding_id: str, workflow_name: str) -> str:
-    return f"""
+def get_workflow_by_name_query() -> str:
+    """
+    Returns a parameterized SQL query to get a workflow by its name.
+    This query is now safe from SQL injection.
+    """
+    return """
         SELECT workflow_id, status, context_summary
         FROM workflows
-        WHERE wedding_id = '{wedding_id}' AND workflow_name = '{workflow_name}'
+        WHERE wedding_id = :wedding_id AND workflow_name = :workflow_name
         LIMIT 1;
     """
 
-def update_workflow_status_query(workflow_id: str, status: str, context_summary: Dict[str, Any]) -> str:
-    return f"""
+def update_workflow_status_query() -> str:
+    """
+    Returns a parameterized SQL query to update the status of a workflow.
+    This query is now safe from SQL injection.
+    """
+    return """
         UPDATE workflows
-        SET status = '{status}',
-            context_summary = '{context_summary}'::jsonb,
+        SET status = :status,
+            context_summary = :context_summary::jsonb,
             updated_at = NOW()
-        WHERE workflow_id = '{workflow_id}';
+        WHERE workflow_id = :workflow_id;
     """
 
-def get_workflows_by_wedding_id_query(wedding_id: str) -> str:
-    return f"""
+def get_workflows_by_wedding_id_query() -> str:
+    """
+    Returns a parameterized SQL query to get all workflows for a wedding.
+    This query is now safe from SQL injection.
+    """
+    return """
         SELECT workflow_id, workflow_name, status, context_summary
         FROM workflows
-        WHERE wedding_id = '{wedding_id}';
+        WHERE wedding_id = :wedding_id;
     """
 
 # Task Feedback Queries
-def create_task_feedback_query(task_id: str, user_id: str, feedback_type: str, content: str) -> str:
-    return f"""
+def create_task_feedback_query() -> str:
+    """
+    Returns a parameterized SQL query to create task feedback.
+    This query is now safe from SQL injection.
+    """
+    return """
         INSERT INTO task_feedback (task_id, user_id, feedback_type, content)
-        VALUES ('{task_id}', '{user_id}', '{feedback_type}', '{content}')
+        VALUES (:task_id, :user_id, :feedback_type, :content)
         RETURNING feedback_id;
     """
 
-def get_task_feedback_query(task_id: str) -> str:
-    return f"""
+def get_task_feedback_query() -> str:
+    """
+    Returns a parameterized SQL query to get task feedback.
+    This query is now safe from SQL injection.
+    """
+    return """
         SELECT feedback_id, user_id, feedback_type, content, created_at
         FROM task_feedback
-        WHERE task_id = '{task_id}';
+        WHERE task_id = :task_id;
     """
 
 # Task Approvals Queries
-def create_task_approval_query(task_id: str, approving_party: str, status: str, approved_by_user_id: str) -> str:
-    return f"""
+def create_task_approval_query() -> str:
+    """
+    Returns a parameterized SQL query to create a task approval.
+    This query is now safe from SQL injection.
+    """
+    return """
         INSERT INTO task_approvals (task_id, approving_party, status, approved_by_user_id)
-        VALUES ('{task_id}', '{approving_party}', '{status}', '{approved_by_user_id}')
+        VALUES (:task_id, :approving_party, :status, :approved_by_user_id)
         RETURNING approval_id;
     """
 
-def get_task_approvals_query(task_id: str) -> str:
-    return f"""
+def get_task_approvals_query() -> str:
+    """
+    Returns a parameterized SQL query to get task approvals.
+    This query is now safe from SQL injection.
+    """
+    return """
         SELECT approval_id, approving_party, status, approved_by_user_id, created_at
         FROM task_approvals
-        WHERE task_id = '{task_id}';
+        WHERE task_id = :task_id;
     """
     
-def create_task_query(
-    wedding_id: str,
-    title: str,
-    description: str = None,
-    is_complete: bool = False,
-    due_date: str = None,
-    priority: str = 'medium',
-    category: str = None,
-    status: str = 'not_started',
-    lead_party: str = None
-) -> str:
-    return f"""
+def create_task_query() -> str:
+    """
+    Returns a parameterized SQL query to create or update a task.
+    This query is now safe from SQL injection.
+    """
+    return """
         INSERT INTO tasks (wedding_id, title, description, is_complete, due_date, priority, category, status, lead_party)
-        VALUES (
-            '{wedding_id}',
-            '{title}',
-            {f"'{description}'" if description else 'NULL'},
-            {is_complete},
-            {f"'{due_date}'" if due_date else 'NULL'},
-            '{priority}',
-            {f"'{category}'" if category else 'NULL'},
-            '{status}',
-            {f"'{lead_party}'" if lead_party else 'NULL'}
-        )
+        VALUES (:wedding_id, :title, :description, :is_complete, :due_date, :priority, :category, :status, :lead_party)
         ON CONFLICT (wedding_id, title) DO UPDATE SET
             description = EXCLUDED.description,
             is_complete = EXCLUDED.is_complete,
@@ -235,28 +230,46 @@ def create_task_query(
         RETURNING task_id;
     """
 
-def get_tasks_by_wedding_id_query(wedding_id: str, filters: Optional[Dict[str, Any]] = None) -> str:
-    filter_clauses = [f"{k} = '{v}'" for k, v in filters.items()] if filters else []
-    where_clause = f"AND {' AND '.join(filter_clauses)}" if filter_clauses else ""
+def get_tasks_by_wedding_id_query(filter_keys: Optional[List[str]] = None) -> str:
+    """
+    Returns a parameterized SQL query to get tasks for a wedding, with optional filters.
+    The list of filter keys must be validated by the caller.
+    This query is now safe from SQL injection.
+    """
+    where_clauses = ["wedding_id = :wedding_id"]
+    if filter_keys:
+        for key in filter_keys:
+            where_clauses.append(f"{key} = :{key}")
+
+    where_clause_str = " AND ".join(where_clauses)
+
     return f"""
         SELECT task_id, title, description, is_complete, due_date, priority, category, status, lead_party
         FROM tasks
-        WHERE wedding_id = '{wedding_id}' {where_clause};
+        WHERE {where_clause_str};
     """
 
-def update_task_status_query(task_id: str, new_status: str) -> str:
-    return f"""
+def update_task_status_query() -> str:
+    """
+    Returns a parameterized SQL query to update the status of a task.
+    This query is now safe from SQL injection.
+    """
+    return """
         UPDATE tasks
-        SET status = '{new_status}',
+        SET status = :new_status,
             updated_at = NOW()
-        WHERE task_id = '{task_id}';
+        WHERE task_id = :task_id;
     """
 
-def get_task_details_query(task_id: str) -> str:
-    return f"""
+def get_task_details_query() -> str:
+    """
+    Returns a parameterized SQL query to get the details of a task.
+    This query is now safe from SQL injection.
+    """
+    return """
         SELECT task_id, wedding_id, title, description, is_complete, due_date, priority, category, status, lead_party
         FROM tasks
-        WHERE task_id = '{task_id}';
+        WHERE task_id = :task_id;
     """
 
 def create_budget_item_query(

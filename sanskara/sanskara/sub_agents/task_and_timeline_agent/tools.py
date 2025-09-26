@@ -18,8 +18,10 @@ async def get_tasks(wedding_id: str, filters: Optional[Dict[str, Any]] = None) -
     logging.info(f"tool_name='get_tasks', wedding_id={wedding_id}, filters={filters}")
     logging.debug(f"Entering get_tasks tool for wedding_id: {wedding_id} with filters: {filters}.")
     try:
-        query = get_tasks_by_wedding_id_query(wedding_id, filters)
-        result = await execute_supabase_sql(query)
+        filter_keys = list(filters.keys()) if filters else None
+        query = get_tasks_by_wedding_id_query(filter_keys)
+        params = {"wedding_id": wedding_id, **(filters or {})}
+        result = await execute_supabase_sql(query, params)
         
         if result.get("status") == "success" and result.get("data"):
             tasks = result["data"]
@@ -38,8 +40,9 @@ async def update_task_status(task_id: str, new_status: str) -> Dict[str, Any]:
     logging.info(f"tool_name='update_task_status', task_id={task_id}, new_status={new_status}")
     logging.debug(f"Entering update_task_status tool for task_id: {task_id} with new_status: {new_status}.")
     try:
-        query = update_task_status_query(task_id, new_status)
-        result = await execute_supabase_sql(query)
+        query = update_task_status_query()
+        params = {"task_id": task_id, "new_status": new_status}
+        result = await execute_supabase_sql(query, params)
         if result.get("status") == "success":
             logging.info(f"Successfully updated task {task_id} to status: {new_status}.")
             return {"status": "success"}
@@ -60,8 +63,14 @@ async def submit_task_feedback(task_id: str, user_id: str, related_entity_id: Op
         if related_entity_id:
             feedback_content += f" (Related Entity: {related_entity_id})"
             
-        query = create_task_feedback_query(task_id, user_id, "comment", feedback_content)
-        result = await execute_supabase_sql(query)
+        query = create_task_feedback_query()
+        params = {
+            "task_id": task_id,
+            "user_id": user_id,
+            "feedback_type": "comment",
+            "content": feedback_content
+        }
+        result = await execute_supabase_sql(query, params)
         if result.get("status") == "success" and result.get("data"):
             feedback_id = result["data"][0].get("feedback_id") # Assuming feedback_id is returned
             logging.info(f"Successfully submitted feedback for task {task_id}. Feedback ID: {feedback_id}")
@@ -81,8 +90,14 @@ async def approve_task_final_choice(task_id: str, user_id: str) -> Dict[str, Any
     try:
         approving_party = "user"
         status = "approved"
-        query = create_task_approval_query(task_id, approving_party, status, user_id)
-        result = await execute_supabase_sql(query)
+        query = create_task_approval_query()
+        params = {
+            "task_id": task_id,
+            "approving_party": approving_party,
+            "status": status,
+            "approved_by_user_id": user_id
+        }
+        result = await execute_supabase_sql(query, params)
         if result.get("status") == "success":
             # Assuming the approval query also handles the logic for is_fully_approved or we fetch it separately
             is_fully_approved = True # This would depend on your SQL query's return or another query

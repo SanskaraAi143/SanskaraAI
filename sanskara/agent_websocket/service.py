@@ -110,10 +110,10 @@ async def websocket_endpoint(websocket: WebSocket):
 
     logging.info(f"Client connected with user_id: {user_id}")
 
-    # Fetch wedding_id from user_id early
+    # Fetch wedding_id from user_id early, using a parameterized query to prevent SQLi
     wedding_id = None
-    user_wedding_query_sql = f"SELECT wedding_id FROM wedding_members WHERE user_id = '{user_id}';"
-    user_wedding_result = await execute_supabase_sql(user_wedding_query_sql)
+    user_wedding_query_sql = "SELECT wedding_id FROM wedding_members WHERE user_id = :user_id;"
+    user_wedding_result = await execute_supabase_sql(user_wedding_query_sql, {"user_id": user_id})
 
     if user_wedding_result and user_wedding_result.get("status") == "success" and user_wedding_result.get("data"):
         wedding_id = user_wedding_result["data"][0].get("wedding_id")
@@ -133,81 +133,64 @@ async def websocket_endpoint(websocket: WebSocket):
     chat_session_db_id = None
 
     async def _ensure_chat_session_id(wedding_id: str, adk_session_id: str | None, user_id: str) -> str | None:
-        """Ensure there is a chat_sessions row for a wedding.
+        """
+        Ensure there is a chat_sessions row for a wedding, using parameterized queries.
         If adk_session_id is provided, prefer linking/looking up by it; else use most recent by wedding.
         Returns session_id. Safe to call repeatedly.
         """
         try:
             has_user_id = await _detect_chat_sessions_has_user_id()
+
             # 1) Try by adk_session_id if provided
             if adk_session_id:
+                params = {"adk_session_id": adk_session_id}
                 if has_user_id:
-                    by_adk_sql = f"""
-                    SELECT session_id FROM chat_sessions
-                    WHERE adk_session_id = '{adk_session_id}' AND user_id = '{user_id}'
-                    ORDER BY last_updated_at DESC LIMIT 1;
-                    """
+                    by_adk_sql = "SELECT session_id FROM chat_sessions WHERE adk_session_id = :adk_session_id AND user_id = :user_id ORDER BY last_updated_at DESC LIMIT 1;"
+                    params["user_id"] = user_id
                 else:
-                    by_adk_sql = f"""
-                    SELECT session_id FROM chat_sessions
-                    WHERE adk_session_id = '{adk_session_id}'
-                    ORDER BY last_updated_at DESC LIMIT 1;
-                    """
-                res2 = await execute_supabase_sql(by_adk_sql)
+                    by_adk_sql = "SELECT session_id FROM chat_sessions WHERE adk_session_id = :adk_session_id ORDER BY last_updated_at DESC LIMIT 1;"
+
+                res2 = await execute_supabase_sql(by_adk_sql, params)
                 if res2 and res2.get("status") == "success" and res2.get("data"):
                     return res2["data"][0].get("session_id")
 
             # 2) Try latest by wedding_id and user_id
+            select_params = {"wedding_id": wedding_id}
             if has_user_id:
-                select_sql = f"""
-                SELECT session_id FROM chat_sessions
-                WHERE wedding_id = '{wedding_id}' AND user_id = '{user_id}'
-                ORDER BY last_updated_at DESC LIMIT 1;
-                """
+                select_sql = "SELECT session_id FROM chat_sessions WHERE wedding_id = :wedding_id AND user_id = :user_id ORDER BY last_updated_at DESC LIMIT 1;"
+                select_params["user_id"] = user_id
             else:
-                select_sql = f"""
-                SELECT session_id FROM chat_sessions
-                WHERE wedding_id = '{wedding_id}'
-                ORDER BY last_updated_at DESC LIMIT 1;
-                """
-            res = await execute_supabase_sql(select_sql)
+                select_sql = "SELECT session_id FROM chat_sessions WHERE wedding_id = :wedding_id ORDER BY last_updated_at DESC LIMIT 1;"
+
+            res = await execute_supabase_sql(select_sql, select_params)
             if res and res.get("status") == "success" and res.get("data"):
                 sid = res["data"][0].get("session_id")
-                # If session exists but not linked to adk_session_id, set it
                 if adk_session_id:
                     try:
+                        update_params = {"adk_session_id": adk_session_id, "session_id": sid}
                         if has_user_id:
-                            update_sql = f"""
-                            UPDATE chat_sessions SET adk_session_id = '{adk_session_id}', last_updated_at = NOW()
-                            WHERE session_id = '{sid}' AND user_id = '{user_id}';
-                            """
+                            update_sql = "UPDATE chat_sessions SET adk_session_id = :adk_session_id, last_updated_at = NOW() WHERE session_id = :session_id AND user_id = :user_id;"
+                            update_params["user_id"] = user_id
                         else:
-                            update_sql = f"""
-                            UPDATE chat_sessions SET adk_session_id = '{adk_session_id}', last_updated_at = NOW()
-                            WHERE session_id = '{sid}';
-                            """
-                        await execute_supabase_sql(update_sql)
+                            update_sql = "UPDATE chat_sessions SET adk_session_id = :adk_session_id, last_updated_at = NOW() WHERE session_id = :session_id;"
+                        await execute_supabase_sql(update_sql, update_params)
                     except Exception:
                         pass
                 return sid
 
             # 3) Otherwise insert a fresh session
             new_sid = str(_uuid.uuid4())
+            insert_params = {"session_id": new_sid, "wedding_id": wedding_id, "adk_session_id": adk_session_id or ''}
             if has_user_id:
-                insert_sql = f"""
-                INSERT INTO chat_sessions (session_id, wedding_id, adk_session_id, user_id)
-                VALUES ('{new_sid}', '{wedding_id}', '{adk_session_id or ''}', '{user_id}')
-                RETURNING session_id;
-                """
+                insert_sql = "INSERT INTO chat_sessions (session_id, wedding_id, adk_session_id, user_id) VALUES (:session_id, :wedding_id, :adk_session_id, :user_id) RETURNING session_id;"
+                insert_params["user_id"] = user_id
             else:
-                insert_sql = f"""
-                INSERT INTO chat_sessions (session_id, wedding_id, adk_session_id)
-                VALUES ('{new_sid}', '{wedding_id}', '{adk_session_id or ''}')
-                RETURNING session_id;
-                """
-            ins = await execute_supabase_sql(insert_sql)
+                insert_sql = "INSERT INTO chat_sessions (session_id, wedding_id, adk_session_id) VALUES (:session_id, :wedding_id, :adk_session_id) RETURNING session_id;"
+
+            ins = await execute_supabase_sql(insert_sql, insert_params)
             if ins and ins.get("status") == "success" and ins.get("data"):
                 return ins["data"][0].get("session_id")
+
         except Exception as e:
             logging.error(f"_ensure_chat_session_id failed: {e}")
         return None
@@ -216,21 +199,23 @@ async def websocket_endpoint(websocket: WebSocket):
     initial_adk_session_id = requested_adk_session_id or None
     initial_chat_session_db_id = requested_chat_session_id or None
 
-    # Try to retrieve existing ChatSession from my DB based on wedding_id and user_id
+    # Try to retrieve existing ChatSession from DB using parameterized queries
     has_user_id_col = await _detect_chat_sessions_has_user_id()
+    check_chat_session_params = {"wedding_id": wedding_id}
     if has_user_id_col:
-        check_chat_session_sql = f"""
+        check_chat_session_sql = """
         SELECT session_id, adk_session_id FROM chat_sessions
-        WHERE wedding_id = '{wedding_id}' AND user_id = '{user_id}'
+        WHERE wedding_id = :wedding_id AND user_id = :user_id
         ORDER BY last_updated_at DESC LIMIT 1;
         """
+        check_chat_session_params["user_id"] = user_id
     else:
-        check_chat_session_sql = f"""
+        check_chat_session_sql = """
         SELECT session_id, adk_session_id FROM chat_sessions
-        WHERE wedding_id = '{wedding_id}'
+        WHERE wedding_id = :wedding_id
         ORDER BY last_updated_at DESC LIMIT 1;
         """
-    existing_chat_session_result = await execute_supabase_sql(check_chat_session_sql)
+    existing_chat_session_result = await execute_supabase_sql(check_chat_session_sql, check_chat_session_params)
     logging.debug(f"Raw result of check existing chat session for user {user_id} in wedding {wedding_id}: {existing_chat_session_result}")
 
     if (not initial_chat_session_db_id) and existing_chat_session_result and existing_chat_session_result.get("status") == "success" and existing_chat_session_result.get("data"):
@@ -324,24 +309,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 logging.debug(f"assemble_baseline_context failed during priming: {e}")
 
         async def _load_conv_bits():
+            """Loads conversation summary and recent messages using secure, parameterized queries."""
             try:
                 # 1) Conversation summary (latest for this wedding)
                 has_user_id_col = await _detect_chat_sessions_has_user_id()
+                summary_params = {"wedding_id": wedding_id}
                 if has_user_id_col:
-                    summary_sql = f"""
-                    SELECT summary FROM chat_sessions
-                    WHERE wedding_id = '{wedding_id}' AND user_id = '{user_id}'
-                    ORDER BY last_updated_at DESC
-                    LIMIT 1;
-                    """
+                    summary_sql = "SELECT summary FROM chat_sessions WHERE wedding_id = :wedding_id AND user_id = :user_id ORDER BY last_updated_at DESC LIMIT 1;"
+                    summary_params["user_id"] = user_id
                 else:
-                    summary_sql = f"""
-                    SELECT summary FROM chat_sessions
-                    WHERE wedding_id = '{wedding_id}'
-                    ORDER BY last_updated_at DESC
-                    LIMIT 1;
-                    """
-                summary_res = await execute_supabase_sql(summary_sql)
+                    summary_sql = "SELECT summary FROM chat_sessions WHERE wedding_id = :wedding_id ORDER BY last_updated_at DESC LIMIT 1;"
+
+                summary_res = await execute_supabase_sql(summary_sql, summary_params)
                 if summary_res and summary_res.get("status") == "success" and summary_res.get("data"):
                     adk_session.state["conversation_summary"] = summary_res["data"][0].get("summary") or ""
                 else:
@@ -350,25 +329,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 # 2) Recent messages (by session if known; else by latest session for wedding)
                 session_for_msgs = adk_session.state.get("chat_session_db_id")
                 if not session_for_msgs:
-                    latest_session_sql = f"""
-                    SELECT session_id FROM chat_sessions
-                    WHERE wedding_id = '{wedding_id}'
-                    ORDER BY last_updated_at DESC
-                    LIMIT 1;
-                    """
-                    latest_session_res = await execute_supabase_sql(latest_session_sql)
+                    latest_session_sql = "SELECT session_id FROM chat_sessions WHERE wedding_id = :wedding_id ORDER BY last_updated_at DESC LIMIT 1;"
+                    latest_session_res = await execute_supabase_sql(latest_session_sql, {"wedding_id": wedding_id})
                     if latest_session_res and latest_session_res.get("status") == "success" and latest_session_res.get("data"):
                         session_for_msgs = latest_session_res["data"][0].get("session_id")
+
                 if session_for_msgs:
-                    load_msgs_sql = f"""
-                    SELECT sender_type, sender_name, content, timestamp FROM chat_messages
-                    WHERE session_id = '{session_for_msgs}'
-                    ORDER BY timestamp DESC
-                    LIMIT 12;
-                    """
-                    messages_result = await execute_supabase_sql(load_msgs_sql)
+                    load_msgs_sql = "SELECT sender_type, sender_name, content, timestamp FROM chat_messages WHERE session_id = :session_id ORDER BY timestamp DESC LIMIT 12;"
+                    messages_result = await execute_supabase_sql(load_msgs_sql, {"session_id": session_for_msgs})
                     if messages_result and messages_result.get("status") == "success":
                         adk_session.state["recent_messages"] = list(reversed(messages_result.get("data", [])))
+                    else:
+                        logging.debug(f"Failed to load recent messages: {messages_result.get('error', 'Unknown error')}")
             except Exception as e:
                 logging.debug(f"_load_conv_bits failed: {e}")
 
@@ -379,61 +351,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 logging.debug(f"semantic warmup failed: {e}")
 
         try:
+            # The duplicated logic has been removed. _load_conv_bits is now called here.
             await asyncio.gather(_load_baseline(), _load_conv_bits(), _warmup_semantic())
-        except Exception:
-            pass
-
-        # Optionally pre-load conversation summary and recent messages for continuity
-        try:
-            # 1) Conversation summary (latest for this wedding)
-            has_user_id_col = await _detect_chat_sessions_has_user_id()
-            if has_user_id_col:
-                summary_sql = f"""
-                SELECT summary FROM chat_sessions
-                WHERE wedding_id = '{wedding_id}' AND user_id = '{user_id}'
-                ORDER BY last_updated_at DESC
-                LIMIT 1;
-                """
-            else:
-                summary_sql = f"""
-                SELECT summary FROM chat_sessions
-                WHERE wedding_id = '{wedding_id}'
-                ORDER BY last_updated_at DESC
-                LIMIT 1;
-                """
-            summary_res = await execute_supabase_sql(summary_sql)
-            if summary_res and summary_res.get("status") == "success" and summary_res.get("data"):
-                adk_session.state["conversation_summary"] = summary_res["data"][0].get("summary") or ""
-            else:
-                adk_session.state.setdefault("conversation_summary", "")
-
-            # 2) Recent messages (by session if known; else by latest session for wedding)
-            session_for_msgs = adk_session.state.get("chat_session_db_id")
-            if not session_for_msgs:
-                # fallback to latest session id for wedding
-                latest_session_sql = f"""
-                SELECT session_id FROM chat_sessions
-                WHERE wedding_id = '{wedding_id}'
-                ORDER BY last_updated_at DESC
-                LIMIT 1;
-                """
-                latest_session_res = await execute_supabase_sql(latest_session_sql)
-                if latest_session_res and latest_session_res.get("status") == "success" and latest_session_res.get("data"):
-                    session_for_msgs = latest_session_res["data"][0].get("session_id")
-            if session_for_msgs:
-                load_msgs_sql = f"""
-                SELECT sender_type, sender_name, content, timestamp FROM chat_messages
-                WHERE session_id = '{session_for_msgs}'
-                ORDER BY timestamp DESC
-                LIMIT 12;
-                """
-                messages_result = await execute_supabase_sql(load_msgs_sql)
-                if messages_result and messages_result.get("status") == "success":
-                    adk_session.state["recent_messages"] = list(reversed(messages_result.get("data", [])))
-                else:
-                    logging.debug(f"Failed to load recent messages: {messages_result.get('error', 'Unknown error')}")
         except Exception as e:
-            logging.debug(f"Failed to preload recent messages: {e}")
+            logging.warning(f"Error during initial data loading: {e}")
 
     # Optionally enrich with semantic memory summaries (session_final_summary entries)
         # Do this in the background so we don't block the user's first turn.
@@ -611,12 +532,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     # Persist user message
                     if adk_session.state.get("chat_session_db_id"):
                         content_json = json.dumps({"text": text_content})
-                        # Escape single quotes for safe SQL literal embedding
-                        content_json_sql = content_json.replace("'", "''")
-                        insert_sql = f"""
+                        insert_sql = """
                         WITH ins AS (
                           INSERT INTO chat_messages (session_id, sender_type, sender_name, content)
-                          VALUES ('{adk_session.state.get('chat_session_db_id')}', 'user', 'User', '{content_json_sql}'::jsonb)
+                          VALUES (:session_id, 'user', 'User', :content::jsonb)
                           RETURNING message_id, session_id
                         )
                         UPDATE chat_sessions cs
@@ -625,7 +544,11 @@ async def websocket_endpoint(websocket: WebSocket):
                         WHERE cs.session_id = ins.session_id
                         RETURNING ins.message_id;
                         """
-                        insert_result = await execute_supabase_sql(insert_sql)
+                        params = {
+                            "session_id": adk_session.state.get('chat_session_db_id'),
+                            "content": content_json
+                        }
+                        insert_result = await execute_supabase_sql(insert_sql, params)
                         if insert_result and insert_result.get("status") == "success" and insert_result.get("data"):
                             logging.info(f"Persisted user message: {insert_result['data'][0].get('message_id')}")
                         else:
@@ -839,12 +762,10 @@ async def websocket_endpoint(websocket: WebSocket):
                                                 pass
                                     if adk_session.state.get("chat_session_db_id"):
                                         content_json = json.dumps({"text": combined})
-                                        # Escape single quotes for safe SQL literal embedding
-                                        content_json_sql = content_json.replace("'", "''")
-                                        insert_sql = f"""
+                                        insert_sql = """
                                             WITH ins AS (
                                                 INSERT INTO chat_messages (session_id, sender_type, sender_name, content)
-                                                VALUES ('{adk_session.state.get('chat_session_db_id')}', 'assistant', 'Sanskara AI', '{content_json_sql}'::jsonb)
+                                                VALUES (:session_id, 'assistant', 'Sanskara AI', :content::jsonb)
                                                 RETURNING message_id, session_id
                                             )
                                             UPDATE chat_sessions cs
@@ -853,7 +774,11 @@ async def websocket_endpoint(websocket: WebSocket):
                                             WHERE cs.session_id = ins.session_id
                                             RETURNING ins.message_id;
                                         """
-                                        await execute_supabase_sql(insert_sql)
+                                        params = {
+                                            "session_id": adk_session.state.get('chat_session_db_id'),
+                                            "content": content_json
+                                        }
+                                        await execute_supabase_sql(insert_sql, params)
                                     else:
                                         logging.warning(
                                             "Cannot persist assistant message: chat_session_db_id is missing."

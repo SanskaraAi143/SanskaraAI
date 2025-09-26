@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from api.onboarding.models import OnboardingSubmission, SecondPartnerSubmission, CurrentUserOnboardingDetails, WeddingDetails, PartnerOnboardingDetails
 from sanskara.helpers import execute_supabase_sql
 import sanskara.db_queries as db_queries
@@ -12,7 +12,7 @@ import logging # Import the custom JSON logger
 onboarding_router = APIRouter()
 
 @onboarding_router.post("/submit")
-async def submit_onboarding_data(submission: OnboardingSubmission | SecondPartnerSubmission):
+async def submit_onboarding_data(submission: OnboardingSubmission | SecondPartnerSubmission, background_tasks: BackgroundTasks):
     logging.info(f"Received onboarding submission.")
 
     user_email = None
@@ -31,7 +31,10 @@ async def submit_onboarding_data(submission: OnboardingSubmission | SecondPartne
         logging.warning("Onboarding submission failed: User email not provided.")
         raise HTTPException(status_code=400, detail="User email is required for onboarding.")
 
-    user_query_result = await execute_supabase_sql(db_queries.get_user_and_wedding_info_by_email_query(user_email))
+    user_query_result = await execute_supabase_sql(
+        db_queries.get_user_and_wedding_info_by_email_query(),
+        {"email": user_email}
+    )
     existing_user_data = user_query_result.get("data")
 
     user_id = None
@@ -53,7 +56,7 @@ async def submit_onboarding_data(submission: OnboardingSubmission | SecondPartne
     elif existing_wedding_id:
         # User exists and is already linked to a wedding via wedding_members
         # This branch handles re-submission by an already onboarded user
-        return await _update_existing_partner_details(user_id, existing_wedding_id, user_email, user_role, submission)
+        return await _update_existing_partner_details(user_id, existing_wedding_id, user_email, user_role, submission, background_tasks)
     elif isinstance(submission, OnboardingSubmission):
         # First partner submission (new wedding creation)
         if submission.current_user_onboarding_details.email == submission.partner_onboarding_details.email:
@@ -62,7 +65,7 @@ async def submit_onboarding_data(submission: OnboardingSubmission | SecondPartne
         return await _handle_first_partner_submission(user_id, submission.wedding_details, submission.current_user_onboarding_details, submission.partner_onboarding_details)
     elif isinstance(submission, SecondPartnerSubmission):
         # Second partner submission (joining existing wedding)
-        return await _handle_second_partner_submission(user_id, submission.wedding_id, submission.current_partner_details)
+        return await _handle_second_partner_submission(user_id, submission.wedding_id, submission.current_partner_details, background_tasks)
     else:
         logging.error(f"Onboarding submission failed: Invalid submission type or missing information for user {user_email}.")
         raise HTTPException(status_code=400, detail="Invalid submission. Please check the provided information.")
@@ -72,8 +75,8 @@ async def get_partner_details(email: str):
     logging.info(f"Received request for partner details for email: {email}")
 
     # Search for a wedding where this email is the expected other partner
-    find_wedding_sql = db_queries.get_wedding_by_expected_partner_email_query(email)
-    wedding_query = await execute_supabase_sql(find_wedding_sql)
+    find_wedding_sql = db_queries.get_wedding_by_expected_partner_email_query()
+    wedding_query = await execute_supabase_sql(find_wedding_sql, {"email": email})
     wedding_data = wedding_query.get("data")
 
     if not wedding_data:

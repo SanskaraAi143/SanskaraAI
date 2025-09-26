@@ -20,6 +20,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi import status, UploadFile, File, Form, Depends
 from typing import Optional
 from sanskara.adk_artifacts import artifact_service, record_artifact_metadata, list_session_artifacts
+from .security import get_current_user_id
 from google.genai import types as _genai_types
 # Removed SQLAlchemy imports and ChatSession/ChatMessage models
 # from sanskara.db import async_get_db_session # Import the new async session getter
@@ -48,20 +49,29 @@ app = get_fast_api_app(
 )
 app.title = "Sanskara AI"
 
+# --- App State ---
+app.state.EMBEDDING_MODEL_READY = False
+
+async def load_embeddings_in_background():
+    """Background task to preload embedding model without blocking startup."""
+    logging.info("Starting embedding model preloading in the background.")
+    try:
+        try:
+            from sanskara.sanskara.memory.supabase_memory_service import preload_embeddings
+        except ImportError:
+            from sanskara.memory.supabase_memory_service import preload_embeddings
+
+        dim = await asyncio.to_thread(preload_embeddings)
+        app.state.EMBEDDING_MODEL_READY = True
+        logging.info(f"Background embedding preloading complete (dim={dim}).")
+    except Exception as e:
+        app.state.EMBEDDING_MODEL_READY = False
+        logging.error(f"Background embedding preload failed: {e}", exc_info=True)
+
 @app.on_event("startup")
 async def startup_event():
     logging.info("Application startup event.")
-    # Preload embedding model to reduce first‑user latency.
-    try:
-        try:
-            # Prefer local package path
-            from sanskara.sanskara.memory.supabase_memory_service import preload_embeddings  # type: ignore
-        except Exception:
-            from sanskara.memory.supabase_memory_service import preload_embeddings  # type: ignore
-        dim = preload_embeddings()
-        logging.info(f"Embeddings preloaded (dim={dim}).")
-    except Exception as e:  # pragma: no cover
-        logging.debug(f"Embedding preload failed/skipped: {e}")
+    asyncio.create_task(load_embeddings_in_background())
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -109,12 +119,15 @@ class OverallHealthStatus(BaseModel):
 async def health_check():
     application_status = HealthCheckResult(status="ok", message="Application is running")
 
-    astra_db_status, local_db_status, agentops_status, supabase_status = await asyncio.gather(
+    results = await asyncio.gather(
         check_astra_db_health(),
         check_local_db_health(),
         check_agentops_health(),
-        check_supabase_db_health()
+        check_supabase_db_health(),
+        check_embedding_model_health(),
     )
+
+    astra_db_status, local_db_status, agentops_status, supabase_status, embedding_status = results
 
     all_checks = {
         "application": application_status,
@@ -122,6 +135,7 @@ async def health_check():
         "local_db": local_db_status,
         "agentops": agentops_status,
         "supabase": supabase_status,
+        "embedding_model": embedding_status,
     }
 
     overall_status = "ok"
@@ -138,95 +152,91 @@ async def health_check():
 async def check_astra_db_health() -> HealthCheckResult:
     logging.debug("Checking AstraDB health.")
     try:
-        if astra_db:
-            # Perform a simple, non-destructive operation to verify connection
-            # For Astrapy, you might try to list collections or get a collection by name
-            # without actually creating or inserting data.
-            # This example assumes a 'test_collection' exists or can be safely accessed.
-            # A more robust check might involve a small read from a known collection.
+        if astra_db and hasattr(astra_db, 'list_collection_names'):
             _ = astra_db.list_collection_names()
             logging.info("AstraDB health check successful.")
             return HealthCheckResult(status="ok", message="AstraDB connection successful")
         else:
-            logging.warning("AstraDB client not initialized.")
-            return HealthCheckResult(status="degraded", message="AstraDB client not initialized")
+            logging.warning("AstraDB client not initialized or lacks required methods.")
+            return HealthCheckResult(status="degraded", message="AstraDB client not fully initialized")
     except Exception as e:
-        logging.error(f"AstraDB health check failed: {e}", exc_info=True)
-        return HealthCheckResult(status="unavailable", message=f"AstraDB connection failed: {e}")
+        logging.error(f"AstraDB health check failed: {e}", exc_info=False) # Avoid leaking exception details
+        return HealthCheckResult(status="unavailable", message="AstraDB connection failed")
 
 async def check_local_db_health() -> HealthCheckResult:
     logging.debug("Checking session database health.")
     try:
-        # For DatabaseSessionService, a simple connection test should suffice.
-        # The ADK's DatabaseSessionService handles the connection internally.
-        # We can try to execute a simple query to verify connectivity through SQLAlchemy.
-        # This is a placeholder for a more direct health check if DatabaseSessionService exposes one.
-        # For now, we'll assume if the app starts, the session service is configured.
-        # A more robust check might involve trying to create/get a dummy session.
-
-        # Directly checking if the DATABASE_URL is set and valid for a PostgreSQL connection.
-        if DATABASE_URL.startswith("postgresql://"):
-            # In a real scenario, you'd want to test the connection directly.
-            # For now, we'll assume if the URL is correctly formed, it's "OK".
+        if DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
+            # This is a placeholder. A real check would involve a connection attempt.
+            # For now, we assume a correctly formatted URL is a sign of being "configured".
             logging.info("Session database health check successful (PostgreSQL URL configured).")
             return HealthCheckResult(status="ok", message="PostgreSQL session database connection successful")
-        elif DATABASE_URL.startswith("sqlite:///"):
-            # Fallback for SQLite if it's still configured
-            conn = sqlite3.connect(DATABASE_URL.replace("sqlite:///", ""))
+        elif DATABASE_URL and DATABASE_URL.startswith("sqlite:///"):
+            db_path = DATABASE_URL.replace("sqlite:///", "")
+            # Ensure the directory exists if the path is not just in-memory
+            if db_path != ":memory:":
+                os.makedirs(os.path.dirname(db_path), exist_ok=True)
+            conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             conn.close()
             logging.info("Local SQLite database health check successful.")
             return HealthCheckResult(status="ok", message="Local SQLite session database connection successful")
         else:
-            logging.warning("Unknown DATABASE_URL scheme for session service.")
-            return HealthCheckResult(status="degraded", message="Unknown session database URL scheme.")
+            logging.warning("Unknown or misconfigured DATABASE_URL for session service.")
+            return HealthCheckResult(status="degraded", message="Session database is not configured correctly")
     except Exception as e:
-        logging.error(f"Session database health check failed: {e}", exc_info=True)
-        return HealthCheckResult(status="unavailable", message=f"Session database connection failed: {e}")
+        logging.error(f"Session database health check failed: {e}", exc_info=False) # Avoid leaking exception details
+        return HealthCheckResult(status="unavailable", message="Session database connection failed")
 
 async def check_agentops_health() -> HealthCheckResult:
     logging.debug("Checking AgentOps health.")
-    try:
-        if AGENTOPS_API_KEY:
-            # In a real scenario, you might make a small, non-authenticated API call
-            # to AgentOps to verify connectivity. For simplicity, we'll check key presence.
-            logging.info("AgentOps health check successful.")
-            return HealthCheckResult(status="ok", message="AgentOps API key is configured")
-        else:
-            logging.warning("AgentOps API key not found.")
-            return HealthCheckResult(status="degraded", message="AgentOps API key not found")
-    except Exception as e:
-        logging.error(f"AgentOps health check failed: {e}", exc_info=True)
-        return HealthCheckResult(status="unavailable", message=f"AgentOps health check failed: {e}")
+    if AGENTOPS_API_KEY:
+        logging.info("AgentOps health check successful.")
+        return HealthCheckResult(status="ok", message="AgentOps API key is configured")
+    else:
+        logging.warning("AgentOps API key not found.")
+        return HealthCheckResult(status="degraded", message="AgentOps API key not found")
 
 async def check_supabase_db_health() -> HealthCheckResult:
     logging.debug("Checking Supabase health.")
     try:
-        # Check MCP toolset availability first
-        if not ("execute_sql" in _supabase_tools):
+        # Check if the toolset initialization seems plausible
+        if not _supabase_tools or "execute_sql" not in _supabase_tools:
             logging.error("Supabase MCP toolset or 'execute_sql' tool not available.")
-            return HealthCheckResult(status="degraded", message="Supabase MCP toolset or execute_sql tool not available")
+            return HealthCheckResult(status="degraded", message="Supabase toolset not available")
 
-        # Then, perform a simple query to check database connectivity via MCP
+        # Perform a simple, non-destructive query
         response = await execute_supabase_sql(sql="SELECT 1;")
         if response and response.get("status") == "success":
             logging.info("Supabase health check successful.")
-            return HealthCheckResult(status="ok", message="Supabase database and MCP toolset available")
+            return HealthCheckResult(status="ok", message="Supabase database and toolset are available")
         else:
-            logging.warning(f"Supabase query failed via MCP: {response.get('error', 'Unknown error')}")
-            return HealthCheckResult(status="degraded", message=f"Supabase query failed via MCP: {response.get('error', 'Unknown error')}")
+            # Log the internal error but don't expose it in the response
+            internal_error = response.get('error', 'Unknown error')
+            logging.warning(f"Supabase query failed via MCP: {internal_error}")
+            return HealthCheckResult(status="degraded", message="Supabase query execution failed")
     except Exception as e:
-        logging.error(f"Supabase health check failed: {e}", exc_info=True)
-        return HealthCheckResult(status="unavailable", message=f"Supabase health check failed: {e}")
+        logging.error(f"Supabase health check failed: {e}", exc_info=False) # Avoid leaking exception details
+        return HealthCheckResult(status="unavailable", message="Supabase health check failed")
+
+async def check_embedding_model_health() -> HealthCheckResult:
+    """Checks the readiness of the embedding model."""
+    logging.debug("Checking embedding model health.")
+    if app.state.EMBEDDING_MODEL_READY:
+        logging.info("Embedding model health check successful.")
+        return HealthCheckResult(status="ok", message="Embedding model is loaded and ready")
+    else:
+        logging.info("Embedding model is still loading.")
+        return HealthCheckResult(status="degraded", message="Embedding model is loading")
 
 @app.post("/artifacts/upload", tags=["Artifacts"])
 async def upload_artifact(
-    user_id: str = Form(...),
     session_id: str = Form(...),
     file: UploadFile = File(...),
     app_name: Optional[str] = Form(None),
     caption: Optional[str] = Form(None),
+    user_id: str = Depends(get_current_user_id),
 ):
     """Upload an artifact and store it via ADK ArtifactService only.
     Requires explicit app_name/user_id/session_id to keep consistency with ADK expectations.
@@ -285,7 +295,7 @@ async def upload_artifact(
     }}
 
 @app.get("/artifacts/list", tags=["Artifacts"])
-async def list_artifacts(user_id: str, session_id: str, app_name: Optional[str] = None):
+async def list_artifacts(session_id: str, app_name: Optional[str] = None, user_id: str = Depends(get_current_user_id)):
     """List artifacts (filename + version + metadata) from in-memory session index."""
     app_name = app_name or os.getenv("SANSKARA_APP_NAME", "sanskara")
     items = await list_session_artifacts(app_name, user_id, session_id)
@@ -295,14 +305,16 @@ async def list_artifacts(user_id: str, session_id: str, app_name: Optional[str] 
 async def get_chat_messages(wedding_id: str, adk_session_id: str):
     """
     Fetches chat messages for a specific wedding and ADK session ID.
+    This endpoint is now protected against SQL injection.
     """
     try:
-        # Find the ChatSession using wedding_id and adk_session_id
-        check_session_sql = f"""
+        # Find the ChatSession using parameterized query to prevent SQL injection
+        check_session_sql = """
         SELECT session_id FROM chat_sessions
-        WHERE wedding_id = '{wedding_id}' AND adk_session_id = '{adk_session_id}';
+        WHERE wedding_id = :wedding_id AND adk_session_id = :adk_session_id;
         """
-        check_result = await execute_supabase_sql(check_session_sql)
+        params = {"wedding_id": wedding_id, "adk_session_id": adk_session_id}
+        check_result = await execute_supabase_sql(check_session_sql, params)
 
         if not check_result or check_result.get("status") != "success" or not check_result.get("data"):
             raise StarletteHTTPException(
@@ -312,13 +324,14 @@ async def get_chat_messages(wedding_id: str, adk_session_id: str):
         
         chat_session_db_id = check_result["data"][0].get("session_id")
 
-        # Fetch all messages for this chat_session.session_id
-        messages_sql = f"""
+        # Fetch all messages for this chat_session.session_id using parameterized query
+        messages_sql = """
         SELECT sender_type, sender_name, content, timestamp FROM chat_messages
-        WHERE session_id = '{chat_session_db_id}'
+        WHERE session_id = :session_id
         ORDER BY timestamp ASC;
         """
-        messages_result = await execute_supabase_sql(messages_sql)
+        messages_params = {"session_id": chat_session_db_id}
+        messages_result = await execute_supabase_sql(messages_sql, messages_params)
 
         if not messages_result or messages_result.get("status") != "success":
             raise StarletteHTTPException(
@@ -352,7 +365,7 @@ async def get_chat_messages(wedding_id: str, adk_session_id: str):
         )
 
 @app.get("/artifacts/content", tags=["Artifacts"])
-async def get_artifact_content(user_id: str, session_id: str, version: str, filename: str, app_name: Optional[str] = None):
+async def get_artifact_content(session_id: str, version: str, filename: str, app_name: Optional[str] = None, user_id: str = Depends(get_current_user_id)):
     """Fetch a single artifact's raw bytes (base64) via ADK ArtifactService."""
     app_name = app_name or os.getenv("SANSKARA_APP_NAME", "sanskara")
     try:

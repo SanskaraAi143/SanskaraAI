@@ -1,7 +1,7 @@
 import json
 from typing import Dict, Any, List, Optional
 from datetime import date
-from fastapi import HTTPException
+from fastapi import HTTPException, BackgroundTasks
 
 from google.adk.models import LlmRequest
 from google.adk.sessions import Session
@@ -22,7 +22,10 @@ async def _update_wedding_details(wedding_id: str,
                                   second_partner_details: SecondPartnerDetails = None,
                                   remove_other_partner_email_expected: bool = False):
     # Fetch existing wedding details to merge
-    existing_wedding_query = await execute_supabase_sql(db_queries.get_wedding_details_query(wedding_id))
+    existing_wedding_query = await execute_supabase_sql(
+        db_queries.get_wedding_details_query(),
+        {"wedding_id": wedding_id}
+    )
     if existing_wedding_query.get("status") == "error" or not existing_wedding_query.get("data"):
         error_message = existing_wedding_query.get('error', 'Unknown error')
         logging.error(f"Failed to fetch existing wedding details for update (wedding_id: {wedding_id}): {error_message}")
@@ -48,11 +51,12 @@ async def _update_wedding_details(wedding_id: str,
             logging.debug(f"_update_wedding_details: Removed other_partner_email_expected.")
 
     logging.debug(f"_update_wedding_details: Final existing_details before DB update: {existing_details}")
-    update_wedding_sql = db_queries.update_wedding_details_jsonb_query(
-        wedding_id,
-        json.dumps(existing_details)
-    )
-    update_result = await execute_supabase_sql(update_wedding_sql)
+    update_wedding_sql = db_queries.update_wedding_details_jsonb_query()
+    params = {
+        "wedding_id": wedding_id,
+        "details": json.dumps(existing_details)
+    }
+    update_result = await execute_supabase_sql(update_wedding_sql, params)
     if update_result.get("status") == "error":
         error_message = update_result.get('error', 'Unknown error')
         logging.error(f"Failed to update wedding details (wedding_id: {wedding_id}): {error_message}")
@@ -60,8 +64,9 @@ async def _update_wedding_details(wedding_id: str,
     return update_result
 
 async def _add_user_to_wedding_members(user_id: str, wedding_id: str, role: str):
-    add_member_sql = db_queries.add_wedding_member_query(user_id, wedding_id, role)
-    add_member_result = await execute_supabase_sql(add_member_sql)
+    add_member_sql = db_queries.add_wedding_member_query()
+    params = {"user_id": user_id, "wedding_id": wedding_id, "role": role}
+    add_member_result = await execute_supabase_sql(add_member_sql, params)
     if add_member_result.get("status") == "error":
         error_message = add_member_result.get('error', 'Unknown error')
         logging.error(f"Failed to add user {user_id} to wedding {wedding_id} with role {role}: {error_message}")
@@ -71,74 +76,76 @@ async def _add_user_to_wedding_members(user_id: str, wedding_id: str, role: str)
 async def _link_user_to_wedding(user_id: str, wedding_id: str, role: str):
     return await _add_user_to_wedding_members(user_id, wedding_id, role)
 
-async def _check_and_trigger_setup_agent(wedding_id: str, current_partner_email: str) -> dict:
-    logging.debug(f"Attempting to fetch updated wedding details for wedding_id: {wedding_id}")
-    updated_wedding_details_query = await execute_supabase_sql(db_queries.get_wedding_details_query(wedding_id))
-    logging.debug(f"Result of fetching updated wedding details: {updated_wedding_details_query}")
-    updated_details = updated_wedding_details_query.get("data")[0].get("details", {})
+async def run_setup_agent_in_background(wedding_id: str, updated_details: Dict[str, Any]):
+    """This function is executed in the background to avoid blocking the API response."""
+    logging.info(f"Background task started: Invoking SetupAgent for wedding_id: {wedding_id}.")
 
-    expected_other_email = updated_details.get("partner_onboarding_details").get('email')
-    logging.debug(f"updated_details: {updated_details}, expected_other_email: {expected_other_email} , current_partner_email: {current_partner_email}")
-    if updated_details.get("partner_data") and \
-       current_partner_email in updated_details["partner_data"] and \
-       expected_other_email and \
-       expected_other_email in updated_details["partner_data"]:
-        logging.info(f"Both partners have submitted for wedding_id: {wedding_id}. Triggering SetupAgent.")
-        update_status_sql = db_queries.update_wedding_status_query(wedding_id, 'onboarding_complete')
-        await execute_supabase_sql(update_status_sql)
-        logging.info(f"Both partners have submitted. Invoking SetupAgent for wedding_id: {wedding_id}.")
-        
-        # Use DatabaseSessionService for SetupAgent
-        session_service = DatabaseSessionService(db_url=SESSION_SERVICE_URI)
-        session = await session_service.create_session(
-            app_name="sanskara",
-            user_id="setup-agent-trigger", # A dummy user ID for this trigger
-        )
-        # # Populate session state with relevant data for SetupAgent
-        # session.state["wedding_id"] = wedding_id
-        # session.state["partner_data"] = updated_details["partner_data"]
-        # session.state["wedding_details"] = updated_details
-        session.state.update({
-            "wedding_id": wedding_id,
-            "partner_data": updated_details.get("partner_data", {}),
-            "wedding_details": updated_details,
-        })
-        runner = Runner(
-            app_name="sanskara",
-            agent=setup_agent,
-            session_service=session_service,
-        )
+    session_service = DatabaseSessionService(db_url=SESSION_SERVICE_URI)
+    session = await session_service.create_session(
+        app_name="sanskara",
+        user_id="setup-agent-trigger",
+    )
+    session.state.update({
+        "wedding_id": wedding_id,
+        "partner_data": updated_details.get("partner_data", {}),
+        "wedding_details": updated_details,
+    })
 
-        user_message_content = types.Content(
-            role="user",
-            parts=[types.Part(text=f"Initialize wedding planning for wedding ID {wedding_id} with details: {json.dumps(updated_details)}. Both partners have completed onboarding.")]
-        )
+    runner = Runner(
+        app_name="sanskara",
+        agent=setup_agent,
+        session_service=session_service,
+    )
 
+    user_message_content = types.Content(
+        role="user",
+        parts=[types.Part(text=f"Initialize wedding planning for wedding ID {wedding_id} with details: {json.dumps(updated_details)}. Both partners have completed onboarding.")]
+    )
+
+    try:
         final_response_text = "SetupAgent did not produce a final response."
-        try:
-            async for event in runner.run_async(user_id=session.user_id, session_id=session.id, new_message=user_message_content):
-                if event.is_final_response():
-                    if event.content and event.content.parts:
-                        final_response_text = event.content.parts[0].text
-                    elif event.actions and event.actions.escalate:
-                        final_response_text = f"SetupAgent escalated: {event.error_message or 'No specific message.'}"
-                    break
-            
-            logging.info(f"SetupAgent response for wedding_id {wedding_id}: {final_response_text}")
+        async for event in runner.run_async(user_id=session.user_id, session_id=session.id, new_message=user_message_content):
+            if event.is_final_response():
+                if event.content and event.content.parts:
+                    final_response_text = event.content.parts[0].text
+                elif event.actions and event.actions.escalate:
+                    final_response_text = f"SetupAgent escalated: {event.error_message or 'No specific message.'}"
+                break
+        
+        logging.info(f"SetupAgent background run finished for wedding {wedding_id}. Response: {final_response_text}")
 
-            # Assuming setup_agent completes successfully, update wedding status to 'active'
-            update_status_sql = db_queries.update_wedding_status_query(wedding_id, 'active')
-            agent_setup_response_db = await execute_supabase_sql(update_status_sql)
-            if agent_setup_response_db.get("status") == "error":
-                error_message = agent_setup_response_db.get('error', 'Unknown error')
-                logging.error(f"Failed to update wedding status to 'active' for wedding_id {wedding_id}: {error_message}")
-                raise HTTPException(status_code=500, detail="Setup completed, but failed to activate wedding. Please contact support.")
-            logging.info(f"Wedding status updated to 'active' for wedding_id: {wedding_id}")
-            
-            return {"message": "Both partners submitted. SetupAgent triggered and wedding status active.", "wedding_id": str(wedding_id)}
-        except Exception as e:
-            logging.error(f"Error invoking SetupAgent for wedding_id {wedding_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Error during SetupAgent invocation: {e}")
+        update_status_sql = db_queries.update_wedding_status_query()
+        await execute_supabase_sql(update_status_sql, {"wedding_id": wedding_id, "status": 'active'})
+        logging.info(f"Wedding status updated to 'active' for wedding_id: {wedding_id}")
+
+    except Exception as e:
+        logging.error(f"Error in background SetupAgent invocation for wedding {wedding_id}: {e}", exc_info=True)
+        # Optionally, update wedding status to 'setup_failed' to indicate an issue
+        update_status_sql = db_queries.update_wedding_status_query()
+        await execute_supabase_sql(update_status_sql, {"wedding_id": wedding_id, "status": 'setup_failed'})
+
+async def _check_and_trigger_setup_agent(wedding_id: str, current_partner_email: str, background_tasks: BackgroundTasks) -> dict:
+    updated_wedding_details_query = await execute_supabase_sql(
+        db_queries.get_wedding_details_query(), {"wedding_id": wedding_id}
+    )
+    if not updated_wedding_details_query.get("data"):
+        return {"message": "Wedding not found, cannot trigger agent."} # Should not happen
+
+    updated_details = updated_wedding_details_query["data"][0].get("details", {})
+    expected_other_email = updated_details.get("partner_onboarding_details", {}).get('email')
+
+    if (updated_details.get("partner_data") and
+            current_partner_email in updated_details["partner_data"] and
+            expected_other_email and
+            expected_other_email in updated_details["partner_data"]):
+
+        logging.info(f"Both partners have submitted for wedding {wedding_id}. Scheduling SetupAgent to run in background.")
+        update_status_sql = db_queries.update_wedding_status_query()
+        await execute_supabase_sql(update_status_sql, {"wedding_id": wedding_id, "status": 'onboarding_complete'})
+
+        background_tasks.add_task(run_setup_agent_in_background, wedding_id, updated_details)
+
+        return {"message": "Both partners submitted. Wedding setup is being initialized in the background.", "wedding_id": str(wedding_id)}
     else:
         return {"message": "Onboarding data updated. Waiting for other partner.", "wedding_id": str(wedding_id)}
 
@@ -156,16 +163,17 @@ async def _handle_first_partner_submission(user_id: str,
     }
     logging.debug(f"_handle_first_partner_submission: initial_details for new wedding: {initial_details}")
 
-    create_wedding_sql = db_queries.create_wedding_query(
-        wedding_details.wedding_name,
-        wedding_details.wedding_date.isoformat(),
-        wedding_details.wedding_location,
-        wedding_details.wedding_tradition,
-        json.dumps(initial_details), # Pass the complete initial JSONB
-        wedding_details.wedding_style
-    )
-    logging.debug(f"_handle_first_partner_submission: create_wedding_sql: {create_wedding_sql}")
-    create_result = await execute_supabase_sql(create_wedding_sql)
+    create_wedding_sql = db_queries.create_wedding_query()
+    params = {
+        "wedding_name": wedding_details.wedding_name,
+        "wedding_date": wedding_details.wedding_date.isoformat() if wedding_details.wedding_date else None,
+        "wedding_location": wedding_details.wedding_location,
+        "wedding_tradition": wedding_details.wedding_tradition,
+        "wedding_style": wedding_details.wedding_style,
+        "details": json.dumps(initial_details)
+    }
+    logging.debug(f"_handle_first_partner_submission: creating wedding with params: {params}")
+    create_result = await execute_supabase_sql(create_wedding_sql, params)
     if create_result.get("status") == "error" or not create_result.get("data"):
         error_message = create_result.get('error', 'Unknown error')
         logging.error(f"Failed to create new wedding: {error_message}")
@@ -182,10 +190,10 @@ async def _handle_first_partner_submission(user_id: str,
 
     return {"message": "First partner data received. Waiting for other partner.", "wedding_id": str(wedding_id)}
 
-async def _handle_second_partner_submission(user_id: str, wedding_id: str, second_partner_details: SecondPartnerDetails):
+async def _handle_second_partner_submission(user_id: str, wedding_id: str, second_partner_details: SecondPartnerDetails, background_tasks: BackgroundTasks):
     # Verify that the wedding_id exists and that the second partner's email matches other_partner_email_expected
-    find_wedding_sql = db_queries.get_wedding_details_query(wedding_id)
-    wedding_query = await execute_supabase_sql(find_wedding_sql)
+    find_wedding_sql = db_queries.get_wedding_details_query()
+    wedding_query = await execute_supabase_sql(find_wedding_sql, {"wedding_id": wedding_id})
     existing_wedding_data = wedding_query.get("data")
 
     if not existing_wedding_data:
@@ -218,9 +226,9 @@ async def _handle_second_partner_submission(user_id: str, wedding_id: str, secon
     # Update the second partner's users table entry to set their wedding_id.
     # This is handled by a migration script on the database, the API just needs to ensure it doesn't send them.
 
-    return await _check_and_trigger_setup_agent(wedding_id, second_partner_details.email)
+    return await _check_and_trigger_setup_agent(wedding_id, second_partner_details.email, background_tasks)
 
-async def _update_existing_partner_details(user_id: str, wedding_id: str, user_email: str, user_role: str, submission: Any):
+async def _update_existing_partner_details(user_id: str, wedding_id: str, user_email: str, user_role: str, submission: Any, background_tasks: BackgroundTasks):
     logging.info(f"User {user_email} already associated with wedding_id: {wedding_id}. Updating details and wedding_members.")
 
     if isinstance(submission, OnboardingSubmission):
@@ -228,27 +236,31 @@ async def _update_existing_partner_details(user_id: str, wedding_id: str, user_e
         partner_onboarding_details = submission.partner_onboarding_details
         
         logging.debug(f"_update_existing_partner_details (OnboardingSubmission): Processing update for user {user_email}.")
-        logging.debug(f"_update_existing_partner_details (OnboardingSubmission): current_user_onboarding_details: {current_user_onboarding_details.model_dump()}")
-        logging.debug(f"_update_existing_partner_details (OnboardingSubmission): partner_onboarding_details: {partner_onboarding_details.model_dump()}")
-
-        # Update current user's partner data
-        await execute_supabase_sql(db_queries.update_wedding_details_jsonb_field_query(
-            wedding_id,
-            ["partner_data", user_email],
-            current_user_onboarding_details.model_dump()
-        ))
         
-        # Update partner onboarding details and expected email
-        await execute_supabase_sql(db_queries.update_wedding_details_jsonb_field_query(
-            wedding_id,
-            ["partner_onboarding_details"],
-            partner_onboarding_details.model_dump()
-        ))
-        await execute_supabase_sql(db_queries.update_wedding_details_jsonb_field_query(
-            wedding_id,
-            ["other_partner_email_expected"],
-            partner_onboarding_details.email
-        ))
+        # Securely update JSONB by fetching, modifying, and writing back
+        wedding_details_query = db_queries.get_wedding_details_query()
+        wedding_details_result = await execute_supabase_sql(wedding_details_query, {"wedding_id": wedding_id})
+        if wedding_details_result.get("status") == "error" or not wedding_details_result.get("data"):
+            raise HTTPException(status_code=404, detail="Wedding not found for update.")
+
+        existing_details = wedding_details_result["data"][0].get("details", {})
+
+        partner_data = existing_details.get("partner_data", {})
+        partner_data[user_email] = current_user_onboarding_details.model_dump()
+        existing_details["partner_data"] = partner_data
+        existing_details["partner_onboarding_details"] = partner_onboarding_details.model_dump()
+        existing_details["other_partner_email_expected"] = partner_onboarding_details.email
+
+        update_sql = db_queries.update_wedding_details_jsonb_query()
+        update_params = {
+            "wedding_id": wedding_id,
+            "details": json.dumps(existing_details)
+        }
+        update_result = await execute_supabase_sql(update_sql, update_params)
+        if update_result.get("status") == "error":
+            logging.error(f"Failed to update wedding details for existing partner: {update_result.get('error')}")
+            raise HTTPException(status_code=500, detail="Failed to update wedding details.")
+
     elif isinstance(submission, SecondPartnerSubmission):
         second_partner_details = submission.current_partner_details
         await _update_wedding_details(
@@ -260,4 +272,4 @@ async def _update_existing_partner_details(user_id: str, wedding_id: str, user_e
         raise HTTPException(status_code=400, detail="Invalid submission type for existing partner update.")
 
     await _add_user_to_wedding_members(user_id, wedding_id, user_role) # Ensure role is updated/inserted
-    return await _check_and_trigger_setup_agent(wedding_id, user_email)
+    return await _check_and_trigger_setup_agent(wedding_id, user_email, background_tasks)

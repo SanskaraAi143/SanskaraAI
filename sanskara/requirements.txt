@@ -1,32 +1,34 @@
+# Core application
 google-adk
 fastapi
 uvicorn
 python-dotenv
-pytest
-pytest-asyncio
-astrapy
 websockets
-google-search-results
+nest_asyncio
+
+# Data and Storage
+supabase
+astrapy
 redis
 celery
-pytest-asyncio
+sentence-transformers
+Pillow==10.3.0
+
+# External Services
+google-search-results==2.4.2
+google-generativeai
 agentops
 twilio
 sendgrid
-# Image generation and storage dependencies
-google-generativeai
-supabase
-aiohttp
-Pillow
-# Additional testing dependencies
-pytest-mock
-# Image generation and storage dependencies
-google-generativeai
-supabase
-aiohttp
-pillow
-sentence-transformers
-# observability
+
+# Observability
 openinference-instrumentation-google-adk
 arize-otel
-nest_asyncio
+
+# Testing
+pytest
+pytest-asyncio
+pytest-mock
+
+# Networking
+aiohttp
