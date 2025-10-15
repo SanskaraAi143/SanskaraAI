@@ -13,6 +13,7 @@ google_search_agent = LlmAgent(
     #model="gemini-2.0-flash-live-001",
     description="Agent responsible for performing Google searches to gather information.",
     instruction=GOOGLE_SEARCH_AGENT_PROMPT,
+    include_contents='none',
     tools=[
         google_search,  # Google Search Tool for vendor-related queries
        

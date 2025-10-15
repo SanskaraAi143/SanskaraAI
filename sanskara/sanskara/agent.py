@@ -200,7 +200,6 @@ async def orchestrator_before_agent_callback(
         return None
 
     try:
-            # Get user role (fix the hardcoded issue)
             user_role = await _get_user_role(wedding_id, user_id)
             
             # Extract user message (for memory/semantic recall; no intent routing)

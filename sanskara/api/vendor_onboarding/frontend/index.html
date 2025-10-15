@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vendor Onboarding Assistant</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; background-color: #f4f4f9; color: #333; }
+        #controls { margin-bottom: 20px; }
+        button { background-color: #4CAF50; color: white; padding: 10px 20px; border: none; cursor: pointer; border-radius: 5px; font-size: 16px; }
+        button:disabled { background-color: #ccc; }
+        #log { width: 80%; max-width: 800px; height: 400px; border: 1px solid #ccc; overflow-y: scroll; padding: 10px; background-color: #fff; border-radius: 5px; }
+        .log-entry { margin-bottom: 8px; }
+        .log-entry .sender { font-weight: bold; }
+        .user-message .sender { color: #007bff; }
+        .agent-message .sender { color: #28a745; }
+        .system-message .sender { color: #6c757d; }
+    </style>
+</head>
+<body>
+    <h1>Vendor Onboarding Assistant</h1>
+    <div id="controls">
+        <button id="startButton">Start Onboarding</button>
+        <button id="stopButton" disabled>Stop Onboarding</button>
+    </div>
+    <div id="log"></div>
+
+    <script>
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const log = document.getElementById('log');
+
+        let websocket;
+        let audioContext;
+        let processor;
+        let mediaStream;
+        
+        // Audio playback queue
+        let audioQueue = [];
+        let isPlaying = false;
+        let currentSource = null;
+        
+        // Audio settings
+        const SEND_SAMPLE_RATE = 16000;
+        const PLAYBACK_SAMPLE_RATE = 24000; // Common output rate from Gemini
+
+        const WS_URL = 'ws://localhost:8765/vendor/onboard';
+
+        startButton.onclick = async () => {
+            logMessage('System', 'Initializing...');
+            try {
+                // 1. Initialize Audio and get microphone permissions
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // 2. Create and resume AudioContext
+                if (!audioContext || audioContext.state === 'closed') {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
+                // 3. Establish WebSocket connection
+                websocket = new WebSocket(WS_URL);
+
+                websocket.onopen = () => {
+                    logMessage('System', 'Connection established. You can start speaking.');
+                    startButton.disabled = true;
+                    stopButton.disabled = false;
+                    
+                    // 4. Start processing microphone audio
+                    const source = audioContext.createMediaStreamSource(mediaStream);
+                    processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+                    source.connect(processor);
+                    processor.connect(audioContext.destination);
+
+                    processor.onaudioprocess = (e) => {
+                        if (websocket.readyState !== WebSocket.OPEN) return;
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        const downsampled = downsampleBuffer(inputData, audioContext.sampleRate, SEND_SAMPLE_RATE);
+                        const pcm16 = toPcm16(downsampled);
+                        const base64 = btoa(String.fromCharCode.apply(null, pcm16));
+                        websocket.send(JSON.stringify({ type: 'audio', data: base64 }));
+                    };
+                };
+
+                websocket.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    if (message.type === 'audio' && message.data) {
+                        const audioData = _base64ToArrayBuffer(message.data);
+                        audioQueue.push(audioData);
+                        if (!isPlaying) {
+                            playNextInQueue();
+                        }
+                    } else if (message.type === 'text') {
+                        logMessage('Agent (Transcription)', message.data);
+                    } else if (message.type === 'interrupted') {
+                        interruptPlayback();
+                    }
+                };
+
+                websocket.onclose = () => {
+                    logMessage('System', 'Connection closed.');
+                    stopStreaming();
+                };
+
+                websocket.onerror = (error) => {
+                    console.error('WebSocket Error:', error);
+                    logMessage('System', 'A WebSocket error occurred.');
+                    stopStreaming();
+                };
+
+            } catch (err) {
+                console.error('Error starting onboarding:', err);
+                logMessage('System', 'Could not start. Please grant microphone permission and try again.');
+            }
+        };
+
+        stopButton.onclick = () => {
+            if (websocket) {
+                websocket.close();
+            }
+        };
+        
+        async function playNextInQueue() {
+            if (audioQueue.length === 0) {
+                isPlaying = false;
+                return;
+            }
+
+            isPlaying = true;
+            const audioData = audioQueue.shift();
+
+            try {
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
+                // The server sends raw Int16 PCM data. We need to convert it to Float32 for the Web Audio API.
+                const int16Array = new Int16Array(audioData);
+                const float32Array = new Float32Array(int16Array.length);
+                for (let i = 0; i < int16Array.length; i++) {
+                    float32Array[i] = int16Array[i] / 32768.0; // Normalize to [-1, 1]
+                }
+
+                const audioBuffer = audioContext.createBuffer(1, float32Array.length, PLAYBACK_SAMPLE_RATE);
+                audioBuffer.getChannelData(0).set(float32Array);
+
+                currentSource = audioContext.createBufferSource();
+                currentSource.buffer = audioBuffer;
+                currentSource.connect(audioContext.destination);
+                
+                currentSource.onended = () => {
+                    currentSource = null;
+                    playNextInQueue();
+                };
+                
+                currentSource.start(0);
+
+            } catch (error) {
+                console.error('Error playing audio:', error);
+                isPlaying = false;
+                setTimeout(playNextInQueue, 100); // Try next chunk after a short delay
+            }
+        }
+
+        function interruptPlayback() {
+            if (currentSource) {
+                try {
+                    currentSource.onended = null; // Prevent playNextInQueue from firing
+                    currentSource.stop();
+                } catch (e) {
+                    console.warn("Error stopping current audio source:", e);
+                }
+                currentSource = null;
+            }
+            audioQueue = []; // Clear the queue
+            isPlaying = false;
+        }
+
+        function stopStreaming() {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            interruptPlayback(); // Also clear audio queue on full stop
+            startButton.disabled = false;
+            stopButton.disabled = true;
+        }
+
+        function logMessage(sender, message) {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            const senderSpan = document.createElement('span');
+            senderSpan.className = 'sender';
+            senderSpan.textContent = `[${sender}]: `;
+            
+            if(sender === 'User') entry.classList.add('user-message');
+            else if(sender.startsWith('Agent')) entry.classList.add('agent-message');
+            else entry.classList.add('system-message');
+            
+            entry.appendChild(senderSpan);
+            entry.appendChild(document.createTextNode(message));
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function downsampleBuffer(buffer, inputSampleRate, outputSampleRate) {
+            if (outputSampleRate === inputSampleRate) {
+                return buffer;
+            }
+            const sampleRateRatio = inputSampleRate / outputSampleRate;
+            const newLength = Math.round(buffer.length / sampleRateRatio);
+            const result = new Float32Array(newLength);
+            let offsetResult = 0;
+            let offsetBuffer = 0;
+            while (offsetResult < result.length) {
+                const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+                let accum = 0, count = 0;
+                for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+                    accum += buffer[i];
+                    count++;
+                }
+                result[offsetResult] = accum / count;
+                offsetResult++;
+                offsetBuffer = nextOffsetBuffer;
+            }
+            return result;
+        }
+
+        function toPcm16(input) {
+            const buffer = new ArrayBuffer(input.length * 2);
+            const view = new DataView(buffer);
+            for (let i = 0; i < input.length; i++) {
+                const s = Math.max(-1, Math.min(1, input[i]));
+                view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return new Uint8Array(buffer);
+        }
+        
+        function _base64ToArrayBuffer(base64) {
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+    </script>
+</body>
+</html>

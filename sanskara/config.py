@@ -1,4 +1,8 @@
 import os
+import dotenv
+
+# Load environment variables from .env file
+dotenv.load_dotenv()
 
 # Application Constants
 MODEL = "gemini-1.5-flash"
@@ -28,6 +32,10 @@ else:
 # We will use the constructed DATABASE_URL directly for it.
 SESSION_SERVICE_URI = "sqlite:///sessions.db"
 DATABASE_URL = MEMORY_DATABASE_URL
+# Google AI Configuration
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+# Google Maps Configuration
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY") # Using VITE prefix as per user's example
 # AgentOps Configuration
 AGENTOPS_API_KEY = os.getenv("AGENTOPS_API_KEY")
 
@@ -42,6 +50,7 @@ CORS_ORIGINS = [
     "http://localhost:8030",
     "http://127.0.0.1",
     "http://127.0.0.1:8030",
+    "http://localhost:8080",
     "https://sanskaraai.com",
     "null",
 ]

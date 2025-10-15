@@ -17,9 +17,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 import logging
+import json
 
 from sanskara.helpers import execute_supabase_sql
 from sanskara.context_service import assemble_baseline_context
+from sanskara.context_models import WorkflowContextSummary # Import the new model
 
 
 class ContextManagerV2:
@@ -69,20 +71,23 @@ class ContextManagerV2:
                         "workflow_id": w.get("workflow_id"),
                         "name": w.get("workflow_name"),
                         "status": w.get("status"),
-                        # Pass through context_summary as-is; downstream prompt will pick relevant parts
-                        "contextual_data": (w.get("context_summary") or {}).get("contextual_data")
-                            if isinstance(w.get("context_summary"), dict) else None,
-                        "current_stage": (w.get("context_summary") or {}).get("current_stage")
-                            if isinstance(w.get("context_summary"), dict) else None,
-                        "stage_goal": (w.get("context_summary") or {}).get("stage_goal")
-                            if isinstance(w.get("context_summary"), dict) else None,
-                        "next_possible_actions": (w.get("context_summary") or {}).get("next_possible_actions")
-                            if isinstance(w.get("context_summary"), dict) else None,
+                        # Deserialize context_summary into WorkflowContextSummary model
+                        "contextual_data": (WorkflowContextSummary(**w.get("context_summary")).contextual_data
+                                            if isinstance(w.get("context_summary"), dict) else None),
+                        "current_stage": (WorkflowContextSummary(**w.get("context_summary")).current_stage
+                                          if isinstance(w.get("context_summary"), dict) else None),
+                        "stage_goal": (WorkflowContextSummary(**w.get("context_summary")).stage_goal
+                                       if isinstance(w.get("context_summary"), dict) else None),
+                        "next_possible_actions": (WorkflowContextSummary(**w.get("context_summary")).next_possible_actions
+                                                  if isinstance(w.get("context_summary"), dict) else None),
+                        "summary_text": (WorkflowContextSummary(**w.get("context_summary")).summary_text
+                                         if isinstance(w.get("context_summary"), dict) else None),
                         "updated_at": w.get("updated_at"),
                     }
                     for w in (workflow_saves or [])
                 ]
-        except Exception:
+        except Exception as e:
+            logging.warning(f"Error processing workflow_saves in ContextManagerV2: {e}")
             workflows = ctx.get("active_workflows") or []
 
         ctx["workflows"] = workflows

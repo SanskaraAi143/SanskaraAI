@@ -4,3 +4,7 @@ tmp/
 *.log
 *.db
 venv
+.aider*
+.env
+docs/research/** 
+**.log.**

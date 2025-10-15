@@ -63,6 +63,7 @@ budget_and_expense_agent = LlmAgent(
     model="gemini-2.5-flash",
     description="Agent responsible for managing the wedding budget and tracking expenses.",
     instruction=BUDGET_AND_EXPENSE_AGENT_PROMPT,
+    include_contents='none',
     #code_executor=BuiltInCodeExecutor(),
     tools=[
         get_total_budget,

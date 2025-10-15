@@ -17,6 +17,7 @@ task_and_timeline_agent = LlmAgent(
     model="gemini-2.5-flash",
     description="Manages wedding tasks and timeline events. Can fetch tasks, update their status, record feedback, handle approvals, and create timeline events.",
     instruction=TASK_AND_TIMELINE_AGENT_PROMPT,
+    include_contents='none',
     tools=[
         get_tasks,
         update_task_status,

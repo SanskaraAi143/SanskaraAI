@@ -22,12 +22,13 @@ API_BASE = "http://localhost:8765"  # REST API base for artifacts
 USER_ID = "fca04215-2af3-4a4e-bcfa-c27a4f54474c"
 
 class SimpleClient:
-    def __init__(self):
+    def __init__(self, mode: str = "live"):
         self.websocket = None
         self.connected = False
         self.session_id = None  # ADK session id provided by server
         self._listener_task = None
         self._reconnector_task = None
+        self.mode = mode # Store the mode
         # Reconnect policy
         self._max_reconnect_attempts = None  # None = unlimited attempts
         self._base_delay = 0.75  # seconds
@@ -39,9 +40,10 @@ class SimpleClient:
     async def connect(self):
         """Connect to the WebSocket server and complete handshake (ready + optional session)."""
         try:
-            ws_url_with_user = f"{WS_URL}?user_id={USER_ID}"
-            self.log(f"Connecting to {ws_url_with_user}")
-            self.websocket = await websockets.connect(ws_url_with_user)
+            # Pass the mode as a query parameter
+            ws_url_with_params = f"{WS_URL}?user_id={USER_ID}&mode={self.mode}"
+            self.log(f"Connecting to {ws_url_with_params}")
+            self.websocket = await websockets.connect(ws_url_with_params)
             # Loop until we receive 'ready'. Capture any 'session' message before/after.
             while True:
                 msg = await self.websocket.recv()
@@ -65,7 +67,6 @@ class SimpleClient:
         except Exception as e:
             self.log(f"❌ Connection failed: {e}")
             return False
-
     async def connect_with_retries(self, max_attempts: int | None = None) -> bool:
         """Try connect() with exponential backoff; max_attempts=None means unlimited."""
         attempt = 0
@@ -85,6 +86,7 @@ class SimpleClient:
             return True
         self.log("Attempting to (re)connect…")
         return await self.connect_with_retries(self._max_reconnect_attempts)
+
 
     def start_listener(self):
         if self._listener_task is None or self._listener_task.done():
@@ -242,15 +244,17 @@ class SimpleClient:
         except Exception as e:
             self.log(f"❌ Content fetch exception: {e}")
 
-# ---------------- Quick Test Mode ----------------
-async def run_quick_test():
-    client = SimpleClient()
-    print("🚀 Running Quick Test")
+
+async def run_quick_test(mode: str):
+    client = SimpleClient(mode=mode)
+    print(f"🚀 Running Quick Test in {mode.upper()} mode")
     print("=" * 50)
     if not await client.ensure_connected():
         return
     client.start_listener()
-    client.start_reconnector()
+    # In normal mode, we don't need the reconnector task as it's not streaming
+    if mode == "live":
+        client.start_reconnector()
     # Wait a moment to ensure session id captured
     await asyncio.sleep(1)
     # Optional: list artifacts initially
@@ -266,21 +270,25 @@ async def run_quick_test():
         for i, msg in enumerate(test_messages, 1):
             print(f"\n--- Test {i}/{len(test_messages)} ---")
             await client.send_message(msg)
-            await asyncio.sleep(3)
-        await asyncio.sleep(5)
+            # In normal mode, we expect a complete response, so no need for sleep between messages
+            if mode == "live":
+                await asyncio.sleep(3)
+        if mode == "live":
+            await asyncio.sleep(5)
     finally:
         await client.close()
 
-# ---------------- Interactive Chat Mode ----------------
-async def run_interactive_chat():
-    client = SimpleClient()
-    print("💬 Interactive Chat Mode")
+async def run_interactive_chat(mode: str):
+    client = SimpleClient(mode=mode)
+    print(f"💬 Interactive Chat Mode in {mode.upper()} mode")
     print("=" * 50)
     print("Commands: /upload <path> [caption...] | /list | /content <version> | /session | /quit")
     if not await client.ensure_connected():
         return
     client.start_listener()
-    client.start_reconnector()
+    # In normal mode, we don't need the reconnector task as it's not streaming
+    if mode == "live":
+        client.start_reconnector()
     loop = asyncio.get_event_loop()
     try:
         while client.connected:
@@ -326,21 +334,37 @@ async def run_interactive_chat():
 
 def main():
     print("🎯 Sanskara AI Simple Test Client")
-    print("Select test mode:")
+    
+    # Prompt for mode selection
+    while True:
+        print("\nSelect mode:")
+        print("1. Live (streaming, real-time interaction)")
+        print("2. Normal (request-response, non-streaming)")
+        mode_choice = input("Enter mode choice (1-2): ").strip()
+        if mode_choice == "1":
+            selected_mode = "live"
+            break
+        elif mode_choice == "2":
+            selected_mode = "normal"
+            break
+        else:
+            print("❌ Invalid mode choice. Please enter 1 or 2.")
+
+    print("\nSelect test type:")
     print("1. Quick automated test")
     print("2. Interactive chat")
     print("3. Exit")
     try:
-        choice = input("\nEnter choice (1-3): ").strip()
-        if choice == "1":
-            asyncio.run(run_quick_test())
-        elif choice == "2":
-            asyncio.run(run_interactive_chat())
-        elif choice == "3":
+        test_choice = input("\nEnter test choice (1-3): ").strip()
+        if test_choice == "1":
+            asyncio.run(run_quick_test(mode=selected_mode))
+        elif test_choice == "2":
+            asyncio.run(run_interactive_chat(mode=selected_mode))
+        elif test_choice == "3":
             print("👋 Goodbye!")
             sys.exit(0)
         else:
-            print("❌ Invalid choice. Please enter 1, 2, or 3.")
+            print("❌ Invalid test choice. Please enter 1, 2, or 3.")
             return main()
     except KeyboardInterrupt:
         print("\n👋 Goodbye!")

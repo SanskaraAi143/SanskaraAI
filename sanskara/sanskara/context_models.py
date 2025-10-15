@@ -77,3 +77,11 @@ class OrchestratorContext(BaseModel):
     def to_state(self) -> Dict[str, Any]:
         # Dump to plain dict for ADK state
         return self.model_dump()
+
+
+class WorkflowContextSummary(BaseModel):
+    contextual_data: Optional[Dict[str, Any]] = None
+    current_stage: Optional[str] = None
+    stage_goal: Optional[str] = None
+    next_possible_actions: Optional[List[str]] = None
+    summary_text: Optional[str] = None  # A general summary text field

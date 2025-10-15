@@ -17,6 +17,7 @@ ritual_and_cultural_agent = LlmAgent(
     model="gemini-2.5-flash",
     description="Agent responsible for providing information and guidance related to wedding rituals, traditions, and cultural aspects.",
     instruction=RITUAL_AND_CULTURAL_AGENT_PROMPT,
+    include_contents='none',
     tools=[
         get_ritual_information,
         ritual_google_search_tool

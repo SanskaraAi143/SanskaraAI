@@ -8,6 +8,7 @@ from google.adk.tools.tool_context import ToolContext
 
 from sanskara.helpers import execute_supabase_sql
 import logging # Import the custom JSON logger
+from sanskara.context_models import WorkflowContextSummary # Import the new model
 
 # Restrict exported symbols so deprecated names (e.g. list_artifacts_for_current_session) are NOT auto-exposed
 __all__ = [
@@ -125,8 +126,14 @@ async def update_workflow_status(workflow_id: str, new_status: str, context_summ
     sql = "UPDATE workflows SET status = :new_status, updated_at = NOW()"
     params = {"new_status": new_status, "workflow_id": workflow_id}
     if context_summary is not None:
-        sql += ", context_summary = :context_summary"
-        params["context_summary"] = json.dumps(context_summary) # Supabase expects JSON string for JSONB
+        try:
+            # Validate and serialize the context_summary using the Pydantic model
+            validated_summary = WorkflowContextSummary(**context_summary)
+            sql += ", context_summary = :context_summary"
+            params["context_summary"] = validated_summary.model_dump_json() # Use model_dump_json for Pydantic v2
+        except Exception as e:
+            logging.error(f"Invalid context_summary for workflow {workflow_id}: {e}")
+            return {"status": "error", "message": f"Invalid context_summary: {e}"}
     sql += " WHERE workflow_id = :workflow_id RETURNING *;"
     
     try:
@@ -157,6 +164,16 @@ async def create_workflow(
     Returns:
         A dictionary containing the created workflow's data or an error.
     """
+    # Validate and serialize the context_summary using the Pydantic model
+    serialized_context_summary = None
+    if context_summary is not None:
+        try:
+            validated_summary = WorkflowContextSummary(**context_summary)
+            serialized_context_summary = validated_summary.model_dump_json()
+        except Exception as e:
+            logging.error(f"Invalid context_summary for new workflow {workflow_name}: {e}")
+            return {"status": "error", "message": f"Invalid context_summary: {e}"}
+
     sql = """
         INSERT INTO workflows (wedding_id, workflow_name, status, context_summary)
         VALUES (:wedding_id, :workflow_name, :status, :context_summary)
@@ -166,7 +183,7 @@ async def create_workflow(
         "wedding_id": wedding_id,
         "workflow_name": workflow_name,
         "status": status,
-        "context_summary": json.dumps(context_summary) if context_summary is not None else None
+        "context_summary": serialized_context_summary
     }
     
     try:

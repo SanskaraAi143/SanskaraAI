@@ -22,6 +22,7 @@ creative_agent = LlmAgent(
     model="gemini-2.5-flash",
     description="Agent responsible for assisting users with creative aspects of wedding planning, including image generation, mood boards, and creative ideas.",
     instruction=CREATIVE_AGENT_PROMPT,
+    include_contents='none',
     tools=[
         add_item_to_mood_board,
         generate_and_add_to_mood_board,

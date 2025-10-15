@@ -25,6 +25,7 @@ vendor_management_agent = LlmAgent(
     #model="gemini-2.0-flash-live-001",
     description="Agent responsible for managing vendor interactions, searching, shortlisting, booking, and reviewing vendors.",
     instruction=VENDOR_MANAGEMENT_AGENT_PROMPT,
+    include_contents='none',
     tools=[
         google_search
         #google_search_agent_tool,  # Google Search Tool for vendor-related queries

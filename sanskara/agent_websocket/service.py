@@ -870,9 +870,20 @@ async def _run_session(
 
                             if input_texts:
                                 unique_texts = list(dict.fromkeys(input_texts))
+                                transcribed_text = ' '.join(unique_texts)
                                 logging.info(
-                                    f"Input transcription: {' '.join(unique_texts)}"
+                                    f"Input transcription: {transcribed_text}"
                                 )
+
+                                # Send user transcription back to frontend for display
+                                try:
+                                    await websocket.send_json({
+                                        "type": "user_transcription",
+                                        "data": transcribed_text
+                                    })
+                                    logging.info(f"User transcription sent to frontend: {transcribed_text}")
+                                except Exception as e:
+                                    logging.error(f"Failed to send user transcription to frontend: {e}")
                             if output_texts:
                                 unique_texts = list(dict.fromkeys(output_texts))
                                 logging.info(

@@ -18,6 +18,7 @@ guest_and_communication_agent = LlmAgent(
     model="gemini-2.5-flash",
     description="Manages guest lists and communication for the wedding. Can add guests, update RSVP status, send emails, and send WhatsApp messages.",
     instruction=GUEST_AND_COMMUNICATION_AGENT_PROMPT,
+    include_contents='none',
     tools=[
         add_guest,
         update_guest_rsvp,

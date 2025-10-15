@@ -33,14 +33,12 @@ nest_asyncio.apply()
 
 
 import logging
+from fastapi.staticfiles import StaticFiles
 try:
     from logging_setup import setup_logging
 except ImportError:
     from sanskara.logging_setup import setup_logging
 from api.app import app
-from api.onboarding.routes import onboarding_router
-from api.weddings.routes import weddings_router
-from api.history.routes import history_router  # Import the history router
 from agent_websocket.service import websocket_endpoint
 
 # Configure root logging once (respects LOG_LEVEL env). If you want file logging,
@@ -54,13 +52,11 @@ setup_logging()
 
 logging.info("Application starting up...") # Log application startup
 
-# Include routers
-app.include_router(onboarding_router, prefix="/onboarding", tags=["Onboarding"])
-app.include_router(weddings_router, prefix="/weddings", tags=["Weddings"])
-app.include_router(history_router, tags=["History"])  # Register the history router without prefix
-
 # Register WebSocket endpoint
 app.websocket("/ws")(websocket_endpoint)
+
+# Mount the frontend directory to serve the test page
+app.mount("/vendor/onboarding/test", StaticFiles(directory="api/vendor_onboarding/frontend", html=True), name="vendor-onboarding-test")
 
 if __name__ == "__main__":
     logging.info(f"agent_name='OrchestratorAgent'")
