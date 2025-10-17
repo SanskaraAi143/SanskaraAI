@@ -94,12 +94,14 @@ app.add_middleware(
 )
 
 # Placeholder for router inclusion, will be updated later
+from .onboarding.routes import onboarding_router
 from .vendor_onboarding.routes import vendor_onboarding_router
 from .vendor_onboarding.upload_routes import upload_router # Import the new router
 from .weddings.routes import weddings_router
 from .history.routes import history_router
 from .image_generation.routes import router as image_generation_router
 
+app.include_router(onboarding_router, prefix="/onboarding", tags=["Onboarding"])
 app.include_router(vendor_onboarding_router, prefix="/onboarding", tags=["Onboarding"])
 app.include_router(upload_router, prefix="/api/vendor_onboarding", tags=["Onboarding Upload"]) # Include the new router
 app.include_router(weddings_router, prefix="/weddings", tags=["Weddings"])

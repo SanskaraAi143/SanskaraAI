@@ -71,6 +71,62 @@ async def _add_user_to_wedding_members(user_id: str, wedding_id: str, role: str)
 async def _link_user_to_wedding(user_id: str, wedding_id: str, role: str):
     return await _add_user_to_wedding_members(user_id, wedding_id, role)
 
+async def _update_user_preferences(user_id: str, onboarding_details: Any) -> Dict[str, Any]:
+    """
+    Updates user preferences in the users table based on onboarding details.
+    Extracts relevant preferences from onboarding data and stores them in the preferences JSONB field.
+    """
+    logging.info(f"_update_user_preferences: Updating preferences for user_id: {user_id}")
+
+    # Extract preferences from onboarding details
+    preferences = {}
+
+    if hasattr(onboarding_details, 'budget_range') and onboarding_details.budget_range:
+        preferences['budget_range'] = onboarding_details.budget_range
+
+    if hasattr(onboarding_details, 'priorities') and onboarding_details.priorities:
+        preferences['priorities'] = onboarding_details.priorities
+
+    if hasattr(onboarding_details, 'guest_estimate') and onboarding_details.guest_estimate:
+        preferences['guest_estimate'] = onboarding_details.guest_estimate
+
+    if hasattr(onboarding_details, 'guest_split') and onboarding_details.guest_split:
+        preferences['guest_split'] = onboarding_details.guest_split
+
+    if hasattr(onboarding_details, 'budget_flexibility') and onboarding_details.budget_flexibility:
+        preferences['budget_flexibility'] = onboarding_details.budget_flexibility
+
+    if hasattr(onboarding_details, 'cultural_background') and onboarding_details.cultural_background:
+        preferences['cultural_background'] = onboarding_details.cultural_background
+
+    if hasattr(onboarding_details, 'ceremonies') and onboarding_details.ceremonies:
+        preferences['ceremonies'] = onboarding_details.ceremonies
+
+    if hasattr(onboarding_details, 'custom_instructions') and onboarding_details.custom_instructions:
+        preferences['custom_instructions'] = onboarding_details.custom_instructions
+
+    if hasattr(onboarding_details, 'teamwork_plan') and onboarding_details.teamwork_plan:
+        preferences['teamwork_plan'] = onboarding_details.teamwork_plan.model_dump() if hasattr(onboarding_details.teamwork_plan, 'model_dump') else onboarding_details.teamwork_plan
+
+    # Update user preferences in database
+    update_preferences_sql = f"""
+    UPDATE users
+    SET preferences = preferences || '{json.dumps(preferences)}'::jsonb,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE user_id = '{user_id}';
+    """
+
+    logging.debug(f"_update_user_preferences: SQL query: {update_preferences_sql}")
+    result = await execute_supabase_sql(update_preferences_sql)
+
+    if result.get("status") == "success":
+        logging.info(f"Successfully updated preferences for user {user_id}: {preferences}")
+        return {"status": "success", "message": f"Updated preferences for user {user_id}"}
+    else:
+        error_message = result.get('error', 'Unknown error')
+        logging.error(f"Failed to update preferences for user {user_id}: {error_message}")
+        return {"status": "error", "message": f"Failed to update user preferences: {error_message}"}
+
 async def _check_and_trigger_setup_agent(wedding_id: str, current_partner_email: str) -> dict:
     logging.debug(f"Attempting to fetch updated wedding details for wedding_id: {wedding_id}")
     updated_wedding_details_query = await execute_supabase_sql(db_queries.get_wedding_details_query(wedding_id))
@@ -176,6 +232,9 @@ async def _handle_first_partner_submission(user_id: str,
 
     await _link_user_to_wedding(user_id, wedding_id, current_user_onboarding_details.role)
 
+    # Update user preferences with onboarding data
+    await _update_user_preferences(user_id, current_user_onboarding_details)
+
     # Update the user's entry to set wedding_id and remove old fields (handled by migration script, but API should not expect them)
     # This part is implicitly handled by the user's instruction that these are removed by migration.
     # The API just needs to ensure it doesn't send them.
@@ -214,6 +273,9 @@ async def _handle_second_partner_submission(user_id: str, wedding_id: str, secon
     )
 
     await _link_user_to_wedding(user_id, wedding_id, second_partner_details.role)
+
+    # Update user preferences with onboarding data for second partner
+    await _update_user_preferences(user_id, second_partner_details)
 
     # Update the second partner's users table entry to set their wedding_id.
     # This is handled by a migration script on the database, the API just needs to ensure it doesn't send them.
@@ -260,4 +322,11 @@ async def _update_existing_partner_details(user_id: str, wedding_id: str, user_e
         raise HTTPException(status_code=400, detail="Invalid submission type for existing partner update.")
 
     await _add_user_to_wedding_members(user_id, wedding_id, user_role) # Ensure role is updated/inserted
+
+    # Update user preferences with onboarding data for re-submission
+    if isinstance(submission, OnboardingSubmission):
+        await _update_user_preferences(user_id, submission.current_user_onboarding_details)
+    elif isinstance(submission, SecondPartnerSubmission):
+        await _update_user_preferences(user_id, submission.current_partner_details)
+
     return await _check_and_trigger_setup_agent(wedding_id, user_email)

@@ -21,7 +21,20 @@ Go through the `Comprehensive Wedding Planning Checklist` item by item. For each
 *   `lead_party`: This is crucial. Use the `teamwork_plan` from `onboarding_data` to assign `'bride_side'`, `'groom_side'`, or `'couple'`. If a task category isn't explicitly assigned, use cultural context or default to `'couple'`. **Example:** If `teamwork_plan` says `Venue & Decor` is `bride_side`, then the "Book Wedding Venue" task *must* have `lead_party: 'bride_side'`.
 *   `due_date`: Calculate this in `'YYYY-MM-DD'` format. Use the `get_current_datetime` tool to know today's date and work backwards from the `wedding_date` based on the timeline suggestions in the checklist (e.g., 12 months before, 6 months before).
 
-**Step 4: Create a Detailed, Collaborative Budget.**
+**Step 4: Create a Detailed, Collaborative Timeline.**
+This step is crucial for personalization. You must create separate timeline events based on the specific ceremonies and traditions of the bride and groom, as well as shared events.
+*   **Bride's Events:** Examine the `bride_info.ceremonies` and `bride_info.cultural_background`. For each distinct ceremony (e.g., "Bride's Mehendi," "Haldi"), create a specific timeline event with `relevant_party: 'bride_side'`.
+*   **Groom's Events:** Do the same for the `groom_info.ceremonies` and `groom_info.cultural_background`. For each of his distinct ceremonies (e.g., "Groom's Tilak," "Baraat"), create a specific timeline event with `relevant_party: 'groom_side'`.
+*   **Shared Events:** Identify events that are for both partners, such as the main "Wedding Ceremony," "Reception," or a joint "Sangeet." Create these with `relevant_party: 'couple'`.
+*   For each timeline event, you must include:
+    *   `event_name`: A highly specific name (e.g., "Priya's Mehendi Ceremony," "Rohan's Haldi Ceremony," "Priya & Rohan's Wedding Reception").
+    *   `event_date_time`: The date and time in `'YYYY-MM-DDTHH:MM:SSZ'` format (UTC). Use the `wedding_date` and schedule other events logically around it.
+    *   `location`: The wedding location or "TBD".
+    *   `description`: A brief description of the event.
+    *   `visibility`: Default to `'shared'`.
+    *   `relevant_party`: `'bride_side'`, `'groom_side'`, or `'couple'`. This is mandatory.
+
+**Step 5: Create a Detailed, Collaborative Budget.**
 This is the most important step. You must create separate budget line items for each side and for shared costs.
 *   First, identify the tasks assigned to the `'bride_side'`. Create `budget_items` for these tasks, assigning their costs to the bride's budget and setting `contribution_by: 'bride_side'`.
 *   Second, do the same for the `'groom_side'`. Create `budget_items` for their assigned tasks, setting `contribution_by: 'groom_side'`.
@@ -33,8 +46,8 @@ This is the most important step. You must create separate budget line items for 
     *   `contribution_by`: `'bride_side'`, `'groom_side'`, or `'couple'`.
     *   `status`: `'No Status/To Do/Doing/Done'`.
 
-**Step 5: Final Execution.**
-Once you have generated the complete lists for workflows, tasks, and budget items in your reasoning, call the necessary tools (`bulk_create_workflows`, `bulk_create_tasks`, `populate_initial_budget`) to save the entire plan to the database.
+**Step 6: Final Execution.**
+Once you have generated the complete lists for workflows, tasks, timeline events, and budget items in your reasoning, call the necessary tools (`bulk_create_workflows`, `bulk_create_tasks`, `bulk_create_timeline_events`, `populate_initial_budget`) to save the entire plan to the database.
 
 ---
 ### **Reference Knowledge Base**
@@ -83,7 +96,8 @@ Once you have generated the complete lists for workflows, tasks, and budget item
 
 *   `get_current_datetime()`: Get the current UTC date and time for calculating due dates.
 *   `bulk_create_workflows(wedding_id: str, workflows_data: List[Dict[str, Any]])`: Saves generated workflows. - workflows_data [{ "name": str, "status"?: 'not_started' | 'in_progress' | 'awaiting_feedback' | 'completed', "context_summary"?: object, "description"?: str }...]
-*   `bulk_create_tasks(wedding_id: str, tasks_data: List[Dict[str, Any]])`: Saves generated tasks. 
+*   `bulk_create_tasks(wedding_id: str, tasks_data: List[Dict[str, Any]])`: Saves generated tasks.
+*   `bulk_create_timeline_events(wedding_id: str, timeline_events_data: List[Dict[str, Any]])`: Saves generated timeline events. - timeline_events_data [{ "event_name": str, "event_date_time": str, "location"?: str, "description"?: str, "visibility"?: 'shared' | 'private', "relevant_party"?: str }...]
 *   `populate_initial_budget(wedding_id: str, budget_details: List[Dict[str, Any]])`: Saves budget items.
 
 ### **Execution Rules & Considerations**

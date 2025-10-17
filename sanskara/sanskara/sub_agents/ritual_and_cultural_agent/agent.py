@@ -7,10 +7,9 @@ from sanskara.sub_agents.ritual_and_cultural_agent.prompt import RITUAL_AND_CULT
 from sanskara.sub_agents.ritual_and_cultural_agent.tools import (
     get_ritual_information
 )
-from sanskara.sub_agents.google_search_agent.agent import google_search_agent
+from google.adk.tools import google_search
 from google.adk.tools.agent_tool import AgentTool
 
-ritual_google_search_tool = AgentTool(agent=google_search_agent)
 # TODO data_management_plan.md need to implement a feedback loop for hindu , wedding ritual data 
 ritual_and_cultural_agent = LlmAgent(
     name="RitualAndCulturalAgent",
@@ -20,7 +19,7 @@ ritual_and_cultural_agent = LlmAgent(
     include_contents='none',
     tools=[
         get_ritual_information,
-        ritual_google_search_tool
+        google_search
     ],
 )
 logging.info("RitualAndCulturalAgent initialized.")

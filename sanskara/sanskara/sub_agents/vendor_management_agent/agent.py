@@ -11,12 +11,10 @@ from sanskara.sub_agents.vendor_management_agent.tools import (
     create_booking,
     submit_review
 )
-from sanskara.sub_agents.google_search_agent.agent import google_search_agent,google_search
+from google.adk.tools import google_search
 from google.adk.tools import agent_tool
 
 # make google agent as tool
-
-google_search_agent_tool = agent_tool.AgentTool(agent=google_search_agent)
 
 vendor_management_agent = LlmAgent(
     name="VendorManagementAgent",
@@ -28,7 +26,6 @@ vendor_management_agent = LlmAgent(
     include_contents='none',
     tools=[
         google_search
-        #google_search_agent_tool,  # Google Search Tool for vendor-related queries
         # search_vendors,
         # get_vendor_details,
         # add_to_shortlist,

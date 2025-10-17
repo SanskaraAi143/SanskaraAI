@@ -4,7 +4,7 @@ from google.genai import types
 import logging # Import the custom JSON logger
 
 from sanskara.sub_agents.setup_agent.prompt import SETUP_AGENT_PROMPT
-from sanskara.sub_agents.setup_agent.tools import get_current_datetime, bulk_create_workflows, bulk_create_tasks, populate_initial_budget,setup_agent_before_agent_callback
+from sanskara.sub_agents.setup_agent.tools import get_current_datetime, bulk_create_workflows, bulk_create_tasks, populate_initial_budget, bulk_create_timeline_events, setup_agent_before_agent_callback
 
 
 setup_agent = LlmAgent(
@@ -17,7 +17,8 @@ setup_agent = LlmAgent(
         get_current_datetime,
         bulk_create_workflows,
         bulk_create_tasks,
-        populate_initial_budget
+        populate_initial_budget,
+        bulk_create_timeline_events
     ],
     #before_model_callback=setup_agent_before_agent_callback
 )

@@ -18,25 +18,29 @@ async def bulk_create_workflows(tool_context: ToolContext, wedding_id: str, work
         logging.error("wedding_id and workflows_data are required for bulk_create_workflows.")
         return {"status": "error", "message": "wedding_id and workflows_data are required."}
 
-    insert_values = []
-    for workflow in workflows_data:
-        name = (workflow.get("name") or "Unnamed Workflow").replace("'", "''")
-        status = (workflow.get("status") or "not_started").replace("'", "''")
-        # Allow LLM to pass description/context; store into context_summary JSONB
+    params = {}
+    values_placeholders = []
+    for i, workflow in enumerate(workflows_data):
+        name = workflow.get("name") or "Unnamed Workflow"
+        status = workflow.get("status") or "not_started"
         context = workflow.get("context_summary") or {}
         if not context and workflow.get("description"):
             context = {"description": workflow.get("description")}
-        context_json = json.dumps(context).replace("'", "''") if context else None
-        context_val = f"'{context_json}'::jsonb" if context_json else "NULL"
-        insert_values.append(f"('{wedding_id}', '{name}', '{status}', {context_val})")
+        
+        params[f"wedding_id_{i}"] = wedding_id
+        params[f"workflow_name_{i}"] = name
+        params[f"status_{i}"] = status
+        params[f"context_summary_{i}"] = json.dumps(context)
+        
+        values_placeholders.append(f"(:wedding_id_{i}, :workflow_name_{i}, :status_{i}, :context_summary_{i}::jsonb)")
 
     sql = f"""
     INSERT INTO workflows (wedding_id, workflow_name, status, context_summary)
-    VALUES {", ".join(insert_values)}
+    VALUES {", ".join(values_placeholders)}
     """
-    logging.debug(f"Executing SQL for bulk_create_workflows: {sql}")
+    logging.debug(f"Executing SQL for bulk_create_workflows: {sql} with params: {params}")
     try:
-        result = await execute_supabase_sql(sql)
+        result = await execute_supabase_sql(sql, params)
         if result.get("status") == "success":
             logging.info(f"Successfully created {len(workflows_data)} workflows for wedding {wedding_id}.")
             return {"status": "success", "message": f"Successfully created {len(workflows_data)} workflows."}
@@ -58,31 +62,30 @@ async def bulk_create_tasks(tool_context: ToolContext, wedding_id: str, tasks_da
         logging.error("wedding_id and tasks_data are required for bulk_create_tasks.")
         return {"status": "error", "message": "wedding_id and tasks_data are required."}
 
-    insert_values = []
-    for task in tasks_data:
-        title = (task.get("title") or "Unnamed Task").replace("'", "''")
-        description = (task.get("description") or "").replace("'", "''")
-        is_complete = bool(task.get("is_complete", False))
-        due_date = task.get("due_date")
-        priority = (task.get("priority") or "medium").replace("'", "''")
-        category = (task.get("category") or "Uncategorized").replace("'", "''")
-        status = (task.get("status") or "No Status").replace("'", "''")
-        lead_party = (task.get("lead_party") or "couple").replace("'", "''")
+    params = {}
+    values_placeholders = []
+    for i, task in enumerate(tasks_data):
+        params[f"wedding_id{i}"] = wedding_id
+        params[f"title{i}"] = task.get("title") or "Unnamed Task"
+        params[f"description{i}"] = task.get("description") or ""
+        params[f"is_complete{i}"] = bool(task.get("is_complete", False))
+        params[f"due_date{i}"] = task.get("due_date")
+        params[f"priority{i}"] = task.get("priority") or "medium"
+        params[f"category{i}"] = task.get("category") or "Uncategorized"
+        params[f"status{i}"] = task.get("status") or "not_started"
+        params[f"lead_party{i}"] = task.get("lead_party") or "couple"
 
-        # Handle None values and format properly
-        due_date_str = f"'{due_date}'" if due_date else "NULL"
-
-        insert_values.append(
-            f"('{wedding_id}', '{title}', '{description}', {is_complete}, {due_date_str}, '{priority}', '{category}', '{status}', '{lead_party}')"
+        values_placeholders.append(
+            f"(:wedding_id{i}, :title{i}, :description{i}, :is_complete{i}, :due_date{i}, :priority{i}, :category{i}, :status{i}, :lead_party{i})"
         )
 
     sql = f"""
     INSERT INTO tasks (wedding_id, title, description, is_complete, due_date, priority, category, status, lead_party)
-    VALUES {", ".join(insert_values)}
+    VALUES {", ".join(values_placeholders)}
     """
-    logging.debug(f"Executing SQL for bulk_create_tasks: {sql}")
+    logging.debug(f"Executing SQL for bulk_create_tasks: {sql} with params: {params}")
     try:
-        result = await execute_supabase_sql(sql)
+        result = await execute_supabase_sql(sql, params)
 
         if result.get("status") == "success":
             logging.info(f"Successfully created {len(tasks_data)} tasks for wedding {wedding_id}.")
@@ -108,30 +111,34 @@ async def populate_initial_budget(tool_context: ToolContext, wedding_id: str, bu
         logging.info("No budget items to populate.")
         return {"status": "success", "message": "No budget items to populate."}
 
-    insert_values = []
-    for budget in budget_details:
-        item_name = (budget.get("item_name") or "Unnamed Item").replace("'", "''")
-        amount = float(budget.get("amount", 0))
-        category = (budget.get("category") or "Uncategorized").replace("'", "''")
-        status = (budget.get("status") or "Pending").replace("'", "''")
+    params = {}
+    values_placeholders = []
+    for i, budget in enumerate(budget_details):
         contribution_by_raw = (budget.get("contribution_by") or "couple").lower()
-        # Map 'couple' -> 'shared' to align with schema convention
         contribution_by = 'shared' if contribution_by_raw == 'couple' else contribution_by_raw
-        contribution_by = contribution_by.replace("'", "''")
 
-        insert_values.append(f"('{wedding_id}', '{item_name}', '{category}', {amount}, NULL, '{status}', '{contribution_by}')")
+        params[f"wedding_id{i}"] = wedding_id
+        params[f"item_name{i}"] = budget.get("item_name") or "Unnamed Item"
+        params[f"category{i}"] = budget.get("category") or "Uncategorized"
+        params[f"amount{i}"] = float(budget.get("amount", 0))
+        params[f"status{i}"] = budget.get("status") or "pending"
+        params[f"contribution_by{i}"] = contribution_by
 
-    if not insert_values:
+        values_placeholders.append(
+            f"(:wedding_id{i}, :item_name{i}, :category{i}, :amount{i}, NULL, :status{i}, :contribution_by{i})"
+        )
+
+    if not values_placeholders:
         logging.info("No budget items to populate.")
         return {"status": "success", "message": "No budget items to populate."}
 
     sql = f"""
     INSERT INTO budget_items (wedding_id, item_name, category, amount, vendor_name, status, contribution_by)
-    VALUES {", ".join(insert_values)}
+    VALUES {", ".join(values_placeholders)}
     """
-    logging.debug(f"Executing SQL for populate_initial_budget: {sql}")
+    logging.debug(f"Executing SQL for populate_initial_budget: {sql} with params: {params}")
     try:
-        result = await execute_supabase_sql(sql)
+        result = await execute_supabase_sql(sql, params)
 
         if result.get("status") == "success":
             logging.info(f"Successfully populated {len(budget_details)} budget items for wedding {wedding_id}.")
@@ -142,6 +149,50 @@ async def populate_initial_budget(tool_context: ToolContext, wedding_id: str, bu
     except Exception as e:
         logging.error(f"Unexpected error in populate_initial_budget for wedding {wedding_id}: {e}", exc_info=True)
         return {"status": "error", "message": "An unexpected error occurred during budget population."}
+
+async def bulk_create_timeline_events(tool_context: ToolContext, wedding_id: str, timeline_events_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Bulk inserts timeline event data into the 'timeline_events' table.
+    The LLM is responsible for generating the timeline_events_data.
+    """
+    logging.info(f"tool_name='bulk_create_timeline_events', wedding_id={wedding_id}, num_timeline_events={len(timeline_events_data)}")
+    logging.debug(f"Entering bulk_create_timeline_events tool with wedding_id: {wedding_id} and {len(timeline_events_data)} timeline events.")
+    if not wedding_id or not timeline_events_data:
+        logging.error("wedding_id and timeline_events_data are required for bulk_create_timeline_events.")
+        return {"status": "error", "message": "wedding_id and timeline_events_data are required."}
+
+    params = {}
+    values_placeholders = []
+    for i, event in enumerate(timeline_events_data):
+        params[f"wedding_id{i}"] = wedding_id
+        params[f"event_name{i}"] = event.get("event_name") or "Unnamed Event"
+        params[f"event_date_time{i}"] = event.get("event_date_time")
+        params[f"location{i}"] = event.get("location")
+        params[f"description{i}"] = event.get("description")
+        params[f"visibility{i}"] = event.get("visibility") or "shared"
+        params[f"relevant_party{i}"] = event.get("relevant_party") or "couple"
+
+        values_placeholders.append(
+            f"(:wedding_id{i}, :event_name{i}, :event_date_time{i}, :location{i}, :description{i}, :visibility{i}, :relevant_party{i})"
+        )
+
+    sql = f"""
+    INSERT INTO timeline_events (wedding_id, event_name, event_date_time, location, description, visibility, relevant_party)
+    VALUES {", ".join(values_placeholders)}
+    """
+    logging.debug(f"Executing SQL for bulk_create_timeline_events: {sql} with params: {params}")
+    try:
+        result = await execute_supabase_sql(sql, params)
+
+        if result.get("status") == "success":
+            logging.info(f"Successfully created {len(timeline_events_data)} timeline events for wedding {wedding_id}.")
+            return {"status": "success", "message": f"Successfully created {len(timeline_events_data)} timeline events."}
+        else:
+            logging.error(f"Failed to create timeline events for wedding {wedding_id}: {result.get('error')}")
+            return {"status": "error", "message": f"Failed to create timeline events: {result.get('error')}"}
+    except Exception as e:
+        logging.error(f"Unexpected error in bulk_create_timeline_events for wedding {wedding_id}: {e}", exc_info=True)
+        return {"status": "error", "message": "An unexpected error occurred during timeline event creation."}
 
 
 # check if the wedding status is 'active' and if the wedding_id is valid
